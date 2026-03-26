@@ -1347,7 +1347,7 @@ function ShotsTab() {
               {shot.artist && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{shot.artist}</div>}
               {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7, lineHeight: 1.4 }}>{shot.description}</div>}
             </div>
-            <div className="shot-list-status" onClick={(e) => { e.stopPropagation(); setDetailShot(shot); setStatusModal("shot-status"); }} style={{ cursor: 'pointer', flexShrink: 0 }}>
+            <div className="shot-list-status" onClick={(e) => { e.stopPropagation(); setDetailShot(shot); setStatusModal("shot-status"); }} onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} style={{ cursor: 'pointer', flexShrink: 0, padding: '8px 0 8px 8px' }}>
               <StatusPill status={shot.status} small />
             </div>
           </div>
