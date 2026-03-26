@@ -41,6 +41,8 @@ export async function fetchReviewShots(reviewSessionId) {
     `select id, name, sort_order,
             asset_version.id, asset_version.version,
             asset_version.asset.parent.id, asset_version.asset.parent.name,
+            asset_version.task.id, asset_version.task.type.name,
+            asset_version.task.status.id, asset_version.task.status.name, asset_version.task.status.color,
             asset_version.thumbnail_id,
             asset_version.status.name, asset_version.status.color,
             asset_version.user.first_name

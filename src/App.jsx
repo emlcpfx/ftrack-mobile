@@ -752,22 +752,15 @@ function ReviewsTab({ userInitial }) {
     setError("");
     try {
       const rsos = await fetchReviewShots(review.id);
-      // Get shot IDs to cross-reference task statuses
-      const shotIds = rsos
-        .map(rso => rso.asset_version?.asset?.parent?.id)
-        .filter(Boolean);
-      const taskStatuses = await fetchTaskStatusesByShots([...new Set(shotIds)]).catch(() => ({}));
-
       setDetailShots(rsos.map(rso => {
-        const shotId = rso.asset_version?.asset?.parent?.id;
-        const taskStatus = shotId && taskStatuses[shotId];
+        const task = rso.asset_version?.task;
         return {
           id: rso.id,
           name: rso.asset_version?.asset?.parent?.name || rso.name || 'Unknown',
-          status: taskStatus ? {
-            id: taskStatus.id,
-            name: taskStatus.name,
-            color: normalizeColor(taskStatus.color),
+          status: task?.status ? {
+            id: task.status.id,
+            name: task.status.name,
+            color: normalizeColor(task.status.color),
           } : {
             name: rso.asset_version?.status?.name || 'Unknown',
             color: normalizeColor(rso.asset_version?.status?.color),
@@ -777,7 +770,8 @@ function ReviewsTab({ userInitial }) {
           hasVersion: !!rso.asset_version,
           versionNum: rso.asset_version?.version || 0,
           versionId: rso.asset_version?.id,
-          taskId: taskStatus?.taskId || null,
+          taskId: task?.id || null,
+          taskType: task?.type?.name || '',
         };
       }));
     } catch (err) {
@@ -829,7 +823,7 @@ function ReviewsTab({ userInitial }) {
                       : "\uD83C\uDFAC"}
                   </div>
                   <div className="shot-info">
-                    <div className="shot-name-lg">{shot.name}</div>
+                    <div className="shot-name-lg">{shot.name}{shot.taskType ? ` / ${shot.taskType}` : ''}</div>
                     <div className="shot-version">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
                   </div>
                   <StatusPill status={shot.status} small />
