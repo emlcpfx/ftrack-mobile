@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  createSession,
+  createSession, loginWithPassword,
   fetchReviews, fetchReviewShots,
   fetchProjects, fetchShots, fetchStatuses,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
@@ -30,7 +30,7 @@ const formatTime = (dateStr) => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=VT323&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -57,9 +57,11 @@ const css = `
 
   /* ── Login ── */
   .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:32px; gap:28px; background: linear-gradient(180deg, #1e2830 0%, var(--bg) 60%); }
-  .login-logo { font-family: var(--font-body); font-size:26px; font-weight:700; letter-spacing:-.5px; }
-  .login-logo span { color: var(--accent); }
-  .login-sub { font-size:11px; color:var(--muted); letter-spacing:1.5px; text-transform:uppercase; font-weight:500; }
+  .login-logo { display:flex; justify-content:center; }
+  .login-logo img { height:32px; }
+  .login-sub { font-family:'VT323', monospace; font-size:1.5rem; font-weight:400; color:#fff; letter-spacing:0.05em; text-align:center; }
+  .login-sub a { color:#fff; text-decoration:none; }
+  .login-sub a:hover { opacity:.8; }
   .login-form { width:100%; display:flex; flex-direction:column; gap:14px; }
   .login-tabs { display:flex; background:var(--surface); border-radius:8px; padding:3px; gap:2px; }
   .login-tab { flex:1; padding:8px; text-align:center; font-size:13px; font-family:var(--font-body); font-weight:500; border-radius:6px; border:none; cursor:pointer; background:transparent; color:var(--muted); transition:all .2s; }
@@ -225,7 +227,7 @@ function Toast({ msg }) {
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState("apikey");
+  const [mode, setMode] = useState("password");
   const [server, setServer] = useState("https://clean-plate-fx.ftrackapp.com");
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
@@ -237,11 +239,15 @@ function LoginScreen({ onLogin }) {
     setLoading(true);
     setError("");
     try {
+      let authUser = user;
+      let authKey = apiKey;
       if (mode === "password") {
-        throw new Error("Password auth is not supported. Use an API key from your ftrack profile.");
+        const creds = await loginWithPassword({ serverUrl: server, username: user, password: pass });
+        authUser = creds.apiUser;
+        authKey = creds.apiKey;
       }
-      await createSession({ serverUrl: server, apiUser: user, apiKey });
-      onLogin({ server, user });
+      await createSession({ serverUrl: server, apiUser: authUser, apiKey: authKey });
+      onLogin({ server, user: authUser });
     } catch (err) {
       setError(err.message || "Connection failed");
     } finally {
@@ -254,8 +260,8 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="login">
       <div>
-        <div className="login-logo">f<span>track</span> mobile</div>
-        <div className="login-sub" style={{ textAlign: "center", marginTop: 4 }}>by CleanPlateFX</div>
+        <div className="login-logo"><img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" /></div>
+        <div className="login-sub"><a href="https://www.thevfxtools.com" target="_blank" rel="noopener noreferrer">VFX Tools</a></div>
       </div>
       <div className="login-form">
         <div className="field">

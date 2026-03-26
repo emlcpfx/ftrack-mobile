@@ -2,6 +2,19 @@ import { Session } from '@ftrack/api';
 
 let _session = null;
 
+export async function loginWithPassword({ serverUrl, username, password }) {
+  const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
+  const res = await fetch(`${url}/auth`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'credentials', username, password }),
+  });
+  if (!res.ok) throw new Error('Invalid username or password');
+  const data = await res.json();
+  if (!data.api_key) throw new Error('Login failed — no API key returned');
+  return { apiUser: data.username || username, apiKey: data.api_key };
+}
+
 export async function createSession({ serverUrl, apiUser, apiKey }) {
   const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
   _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
