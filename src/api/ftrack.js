@@ -80,7 +80,7 @@ export async function fetchShots(projectId) {
 export async function fetchProjectTasks(projectId) {
   const s = getSession();
   const result = await s.query(
-    `select id, name, parent_id, type.name,
+    `select id, name, description, parent_id, type.name,
             status.id, status.name, status.color,
             assignments.resource.id, assignments.resource.first_name
      from Task
@@ -98,6 +98,7 @@ export async function fetchProjectTasks(projectId) {
     byShot[shotId].push({
       id: task.id,
       name: task.name,
+      description: task.description || '',
       type: task.type?.name || '',
       status: {
         id: task.status?.id,

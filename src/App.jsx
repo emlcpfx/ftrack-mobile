@@ -932,6 +932,7 @@ function ShotsTab() {
                 shotId: s.id,
                 name: s.name,
                 type: t.type,
+                description: t.description,
                 status: { id: t.status.id, name: t.status.name, color: normalizeColor(t.status.color) },
                 thumb: shotMap[s.id]?.thumb,
                 artist: t.assignee,
@@ -1312,6 +1313,7 @@ function ShotsTab() {
             <div className="shot-list-info">
               <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}</div>
               {shot.artist && <div className="shot-list-artist">{shot.artist}</div>}
+              {shot.description && <div className="shot-list-artist" style={{ marginTop: 1 }}>{shot.description}</div>}
             </div>
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />
