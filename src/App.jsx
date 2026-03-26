@@ -984,6 +984,51 @@ function ShotsTab() {
   // ── Player view ──
   if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
 
+  // ── Status picker view (full screen, no modal) ──
+  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "filter") {
+    const isFilter = statusModal === "filter";
+    const title = isFilter ? "Filter by Status"
+      : statusModal === "bulk" ? `Set status for ${selected.size} shots`
+      : "Change Status";
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+        <div className="header">
+          <div className="back-btn" onClick={() => setStatusModal(null)}>&#8592; Back</div>
+          <div className="header-title" style={{ fontSize: 15 }}>{title}</div>
+        </div>
+        <div className="scroll">
+          {isFilter && (
+            <div className="shot-list-item" onClick={() => { setStatusFilter(null); setStatusModal(null); }}>
+              <div className="shot-list-info"><div className="shot-list-name">All Shots</div></div>
+              {!statusFilter && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+            </div>
+          )}
+          {statuses.map(s => (
+            <div key={s.id} className="shot-list-item" onClick={() => {
+              if (isFilter) {
+                setStatusFilter(s.name);
+                setStatusModal(null);
+              } else {
+                applyStatus(s);
+              }
+            }}>
+              <span style={{ background: s.color, width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+              <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
+              {isFilter && statusFilter === s.name && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+              {statusModal === "shot-status" && detailShot?.status?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+            </div>
+          ))}
+          {statuses.length === 0 && (
+            <div className="empty">
+              <div className="empty-text">No statuses available.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // ── Shot detail view ──
   if (detailShot) return (
     <div className="shot-detail" style={{ position: "relative" }}>
@@ -1029,22 +1074,6 @@ function ShotsTab() {
       </div>
 
       {/* Status Modal for shot */}
-      {statusModal === "shot-status" && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
-          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
-            <div className="modal-handle" />
-            <div className="modal-title">Change Status</div>
-            {statuses.map(s => (
-              <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
-                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
-                <span className="status-option-name">{s.name}</span>
-                {detailShot.status.id === s.id && <span className="status-option-check">&#10003;</span>}
-              </div>
-            ))}
-            <button className="modal-cancel" onClick={() => setStatusModal(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 
@@ -1135,45 +1164,6 @@ function ShotsTab() {
         ))}
       </div>
 
-      {/* Bulk Status Modal */}
-      {statusModal === "bulk" && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
-          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
-            <div className="modal-handle" />
-            <div className="modal-title">Set status for {selected.size} shots</div>
-            {statuses.length === 0 && <div style={{ padding: '16px 20px', color: 'var(--muted)', fontSize: 13 }}>No statuses loaded.</div>}
-            {statuses.map(s => (
-              <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
-                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
-                <span className="status-option-name">{s.name}</span>
-              </div>
-            ))}
-            <button className="modal-cancel" onClick={() => setStatusModal(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {/* Filter Modal */}
-      {statusModal === "filter" && (
-        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
-          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
-            <div className="modal-handle" />
-            <div className="modal-title">Filter by Status</div>
-            <div className="status-option" onClick={() => { setStatusFilter(null); setStatusModal(null); }}>
-              <span style={{ fontSize: 14 }}>All shots</span>
-              {!statusFilter && <span className="status-option-check">&#10003;</span>}
-            </div>
-            {statuses.map(s => (
-              <div key={s.id} className="status-option" onClick={() => { setStatusFilter(s.name); setStatusModal(null); }}>
-                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
-                <span className="status-option-name">{s.name}</span>
-                {statusFilter === s.name && <span className="status-option-check">&#10003;</span>}
-              </div>
-            ))}
-            <button className="modal-cancel" onClick={() => setStatusModal(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
