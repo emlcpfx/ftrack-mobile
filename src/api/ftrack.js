@@ -3,14 +3,13 @@ import { Session } from '@ftrack/api';
 let _session = null;
 
 export async function loginWithPassword({ serverUrl, username, password }) {
-  const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
-  const res = await fetch(`${url}/auth`, {
+  const res = await fetch('/api/auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'credentials', username, password }),
+    body: JSON.stringify({ serverUrl, username, password }),
   });
-  if (!res.ok) throw new Error('Invalid username or password');
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Invalid username or password');
   if (!data.api_key) throw new Error('Login failed — no API key returned');
   return { apiUser: data.username || username, apiKey: data.api_key };
 }
@@ -50,8 +49,7 @@ export async function fetchReviewShots(reviewSessionId) {
             version.status.name, version.status.color,
             version.user.first_name
      from ReviewSessionObject
-     where review_session_id is "${reviewSessionId}"
-     order by sort ascending`
+     where review_session_id is "${reviewSessionId}"`
   );
   return result.data;
 }

@@ -35,19 +35,19 @@ const css = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #1a1d21;
-    --surface: #22262b;
-    --card: #282d33;
-    --card2: #2f353c;
-    --border: #3a4049;
-    --accent: #0097CE;
-    --accent2: #00B4D8;
+    --bg: #1e1a2a;
+    --surface: #262235;
+    --card: #2e2a3e;
+    --card2: #353148;
+    --border: #3d3855;
+    --accent: #c77dba;
+    --accent2: #d4a0c8;
     --green: #4CAF50;
     --red: #E74C3C;
     --amber: #F5A623;
-    --blue: #2196F3;
-    --text: #E8EAED;
-    --muted: #8B9298;
+    --blue: #7c6dd8;
+    --text: #e8e6ef;
+    --muted: #8a8599;
     --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
@@ -56,11 +56,12 @@ const css = `
   .app { display: flex; flex-direction: column; height: 100vh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
 
   /* ── Login ── */
-  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:32px; gap:20px; background: linear-gradient(180deg, #1e2830 0%, var(--bg) 60%); }
-  .login-brand { display:flex; flex-direction:column; align-items:center; gap:6px; margin-bottom:8px; }
-  .login-logo { display:flex; justify-content:center; }
-  .login-logo img { height:52px; filter: brightness(0) invert(1); }
-  .login-sub { font-family:'VT323', monospace; font-size:1rem; font-weight:400; color:var(--muted); letter-spacing:0.15em; text-align:center; text-transform:uppercase; }
+  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:32px; gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
+  .login-brand { display:flex; align-items:center; gap:14px; margin-bottom:8px; }
+  .login-logo { display:flex; align-items:center; }
+  .login-logo img { height:28px; filter: brightness(0) invert(1); }
+  .login-divider { width:1px; height:24px; background:var(--border); }
+  .login-sub { font-family:'VT323', monospace; font-size:1.4rem; font-weight:400; color:var(--muted); letter-spacing:0.12em; line-height:1; }
   .login-sub a { color:var(--muted); text-decoration:none; transition:color .2s; }
   .login-sub a:hover { color:var(--text); }
   .login-form { width:100%; display:flex; flex-direction:column; gap:14px; }
@@ -228,7 +229,7 @@ function Toast({ msg }) {
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState("password");
+  const [mode, setMode] = useState("apikey");
   const [server, setServer] = useState("https://clean-plate-fx.ftrackapp.com");
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
@@ -262,9 +263,10 @@ function LoginScreen({ onLogin }) {
     <div className="login">
       <div className="login-brand">
         <div className="login-logo"><img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" /></div>
+        <div className="login-divider" />
         <div className="login-sub"><a href="https://www.thevfxtools.com" target="_blank" rel="noopener noreferrer">VFX Tools</a></div>
       </div>
-      <div className="login-form">
+      <form className="login-form" onSubmit={e => { e.preventDefault(); handleLogin(); }}>
         <div className="field">
           <label>Server URL</label>
           <input placeholder="yoursite.ftrackapp.com" value={server} onChange={e => setServer(e.target.value)} />
@@ -289,10 +291,10 @@ function LoginScreen({ onLogin }) {
           </div>
         )}
         {error && <div className="error-msg">{error}</div>}
-        <button className="btn-primary" onClick={handleLogin} disabled={loading || !ready}>
+        <button className="btn-primary" type="submit" disabled={loading || !ready}>
           {loading ? "Connecting..." : "Connect"}
         </button>
-      </div>
+      </form>
     </div>
   );
 }
