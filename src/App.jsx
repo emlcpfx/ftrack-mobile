@@ -339,7 +339,7 @@ function LoginScreen({ onLogin }) {
 }
 
 // ─── Player Screen ────────────────────────────────────────────────────────────
-function PlayerScreen({ shot, onClose }) {
+function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
   const canvasRef = useRef(null);
   const videoRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
@@ -550,16 +550,20 @@ function PlayerScreen({ shot, onClose }) {
         <div className="scroll">
           {statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={async () => {
+              const newStatus = { id: s.id, name: s.name, color: normalizeColor(s.color) };
               try {
+                console.log('[Player] Updating status:', shot.taskId ? 'Task' : 'Version', shot.taskId || shot.versionId, '→', s.name, s.id);
                 if (shot.taskId) {
                   await updateTaskStatus(shot.taskId, s.id);
                 } else {
                   await updateVersionStatus(shot.versionId, s.id);
                 }
-                setCurrentStatus({ id: s.id, name: s.name, color: normalizeColor(s.color) });
+                setCurrentStatus(newStatus);
+                if (onStatusChange) onStatusChange(shot.id, newStatus);
                 showToast(`Status \u2192 ${s.name}`);
-              } catch {
-                showToast("Status update failed");
+              } catch (err) {
+                console.error('[Player] Status update error:', err);
+                showToast(`Failed: ${err.message || 'Status update failed'}`);
               }
               setStatusPicker(false);
             }}>
@@ -578,10 +582,20 @@ function PlayerScreen({ shot, onClose }) {
       <Toast msg={toast} />
       <div className="player-header">
         <div className="back-btn" onClick={onClose}>&#8592; Back</div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div className="player-title">{shot.name}</div>
           <div className="player-title-sub">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
         </div>
+        {shots && shots.length > 1 && onSwitch && (
+          <div style={{ display: 'flex', gap: 4 }}>
+            <button style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, width: 32, height: 32, color: 'var(--text)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => { const i = shots.findIndex(s => s.id === shot.id); if (i > 0) onSwitch(shots[i - 1]); }}
+              disabled={shots.findIndex(s => s.id === shot.id) === 0}>&#9664;</button>
+            <button style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 6, width: 32, height: 32, color: 'var(--text)', fontSize: 16, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              onClick={() => { const i = shots.findIndex(s => s.id === shot.id); if (i < shots.length - 1) onSwitch(shots[i + 1]); }}
+              disabled={shots.findIndex(s => s.id === shot.id) === shots.length - 1}>&#9654;</button>
+          </div>
+        )}
         <div onClick={() => setStatusPicker(true)} style={{ cursor: 'pointer' }}>
           <StatusPill status={currentStatus} small />
         </div>
@@ -788,7 +802,9 @@ function ReviewsTab({ userInitial }) {
     history.back();
   };
 
-  if (player) return <PlayerScreen shot={player} onClose={closePlayer} />;
+  if (player) return <PlayerScreen shot={player} onClose={closePlayer} shots={detailShots} onSwitch={setPlayer} onStatusChange={(shotId, newStatus) => {
+    setDetailShots(prev => prev.map(s => s.id === shotId ? { ...s, status: newStatus } : s));
+  }} />;
 
   if (detail) return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
@@ -1146,7 +1162,10 @@ function ShotsTab() {
   if (loading) return <div className="loading" style={{ flex: 1 }}>Loading...</div>;
 
   // ── Player view ──
-  if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
+  if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} onStatusChange={(id, newStatus) => {
+    setShots(prev => prev.map(s => s.id === id ? { ...s, status: newStatus } : s));
+    if (detailShot?.id === id) setDetailShot(prev => ({ ...prev, status: newStatus }));
+  }} />;
 
   // ── Picker views (full screen) ──
   if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "filter" || statusModal === "assignee") {
