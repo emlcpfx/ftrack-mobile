@@ -40,7 +40,7 @@ export async function fetchReviewShots(reviewSessionId) {
   const result = await s.query(
     `select id, name, sort_order,
             asset_version.id, asset_version.version,
-            asset_version.asset.parent.name,
+            asset_version.asset.parent.id, asset_version.asset.parent.name,
             asset_version.thumbnail_id,
             asset_version.status.name, asset_version.status.color,
             asset_version.user.first_name
@@ -48,6 +48,28 @@ export async function fetchReviewShots(reviewSessionId) {
      where review_session_id is "${reviewSessionId}"`
   );
   return result.data;
+}
+
+export async function fetchTaskStatusesByShots(shotIds) {
+  if (shotIds.length === 0) return {};
+  const s = getSession();
+  const result = await s.query(
+    `select parent_id, status.name, status.color, status.id
+     from Task
+     where parent_id in (${shotIds.map(id => `"${id}"`).join(',')})`
+  );
+  // Map shot ID → first task's status (most shots have one task)
+  const byShot = {};
+  for (const t of result.data) {
+    if (!byShot[t.parent_id]) {
+      byShot[t.parent_id] = {
+        id: t.status?.id,
+        name: t.status?.name || 'Unknown',
+        color: t.status?.color || '',
+      };
+    }
+  }
+  return byShot;
 }
 
 // ── Shots ─────────────────────────────────────────────────────────────────────

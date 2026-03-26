@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   createSession,
-  fetchReviews, fetchReviewShots,
+  fetchReviews, fetchReviewShots, fetchTaskStatusesByShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
@@ -755,19 +755,33 @@ function ReviewsTab({ userInitial }) {
     setError("");
     try {
       const rsos = await fetchReviewShots(review.id);
-      setDetailShots(rsos.map(rso => ({
-        id: rso.id,
-        name: rso.asset_version?.asset?.parent?.name || rso.name || 'Unknown',
-        status: {
-          name: rso.asset_version?.status?.name || 'Unknown',
-          color: normalizeColor(rso.asset_version?.status?.color),
-        },
-        artist: rso.asset_version?.user?.first_name || '',
-        thumb: getThumbnailUrl(rso.asset_version?.thumbnail_id),
-        hasVersion: !!rso.asset_version,
-        versionNum: rso.asset_version?.version || 0,
-        versionId: rso.asset_version?.id,
-      })));
+      // Get shot IDs to cross-reference task statuses
+      const shotIds = rsos
+        .map(rso => rso.asset_version?.asset?.parent?.id)
+        .filter(Boolean);
+      const taskStatuses = await fetchTaskStatusesByShots([...new Set(shotIds)]).catch(() => ({}));
+
+      setDetailShots(rsos.map(rso => {
+        const shotId = rso.asset_version?.asset?.parent?.id;
+        const taskStatus = shotId && taskStatuses[shotId];
+        return {
+          id: rso.id,
+          name: rso.asset_version?.asset?.parent?.name || rso.name || 'Unknown',
+          status: taskStatus ? {
+            id: taskStatus.id,
+            name: taskStatus.name,
+            color: normalizeColor(taskStatus.color),
+          } : {
+            name: rso.asset_version?.status?.name || 'Unknown',
+            color: normalizeColor(rso.asset_version?.status?.color),
+          },
+          artist: rso.asset_version?.user?.first_name || '',
+          thumb: getThumbnailUrl(rso.asset_version?.thumbnail_id),
+          hasVersion: !!rso.asset_version,
+          versionNum: rso.asset_version?.version || 0,
+          versionId: rso.asset_version?.id,
+        };
+      }));
     } catch (err) {
       setError(err.message);
     } finally {
