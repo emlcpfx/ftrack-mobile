@@ -354,6 +354,8 @@ function PlayerScreen({ shot, onClose }) {
   const [statuses, setStatuses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [fps, setFps] = useState(24);
+  const [statusPicker, setStatusPicker] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState(shot.status);
   const lastPos = useRef(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
@@ -572,8 +574,38 @@ function PlayerScreen({ shot, onClose }) {
           <div className="player-title">{shot.name}</div>
           <div className="player-title-sub">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
         </div>
-        <StatusPill status={shot.status} small />
+        <div onClick={() => setStatusPicker(true)} style={{ cursor: 'pointer' }}>
+          <StatusPill status={currentStatus} small />
+        </div>
       </div>
+
+      {/* Status Picker Modal */}
+      {statusPicker && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 300, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+          <div className="header">
+            <div className="back-btn" onClick={() => setStatusPicker(false)}>&#8592; Back</div>
+            <div className="header-title" style={{ fontSize: 15 }}>Change Status</div>
+          </div>
+          <div className="scroll">
+            {statuses.map(s => (
+              <div key={s.id} className="shot-list-item" onClick={async () => {
+                try {
+                  await updateVersionStatus(shot.versionId, s.id);
+                  setCurrentStatus({ id: s.id, name: s.name, color: normalizeColor(s.color) });
+                  showToast(`Status \u2192 ${s.name}`);
+                } catch {
+                  showToast("Status update failed");
+                }
+                setStatusPicker(false);
+              }}>
+                <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+                <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
+                {currentStatus?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Video / Canvas area */}
       <div className="video-area">
@@ -1312,8 +1344,8 @@ function ShotsTab() {
             }
             <div className="shot-list-info">
               <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}</div>
-              {shot.artist && <div className="shot-list-artist">{shot.artist}</div>}
-              {shot.description && <div className="shot-list-artist" style={{ marginTop: 1 }}>{shot.description}</div>}
+              {shot.artist && <div className="shot-list-artist" style={{ fontWeight: 500, color: 'var(--accent)' }}>{shot.artist}</div>}
+              {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7 }}>{shot.description}</div>}
             </div>
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />
