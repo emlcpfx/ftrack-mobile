@@ -4,7 +4,7 @@ import {
   fetchReviews, fetchReviewShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
-  updateShotStatus, bulkUpdateStatus, updateVersionStatus,
+  updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
@@ -844,6 +844,7 @@ function ShotsTab() {
   const [statusFilter, setStatusFilter] = useState(null);
   const [statusModal, setStatusModal] = useState(null);
   const [modalTarget, setModalTarget] = useState(null);
+  const [editingTask, setEditingTask] = useState(null);
   const [toast, setToast] = useState("");
   const [multiSelect, setMultiSelect] = useState(false);
   // Shot detail state
@@ -903,29 +904,44 @@ function ShotsTab() {
 
     Promise.all([fetchShots(selectedProjectId), fetchProjectTasks(selectedProjectId).catch(() => ({}))])
       .then(([data, tasksByShot]) => {
-        setShots(data.map(s => {
+        // Build a flat task list — each entry is a task carrying its parent shot info
+        const shotMap = {};
+        for (const s of data) {
+          shotMap[s.id] = { name: s.name, thumb: getThumbnailUrl(s.thumbnail_id) };
+        }
+        const flat = [];
+        for (const s of data) {
           const tasks = tasksByShot[s.id] || [];
-          const allAssignees = [...new Set(tasks.flatMap(t => t.assignee ? [t.assignee] : []))];
-          // If single task, merge task info into the shot card
-          const merged = tasks.length === 1 ? tasks[0] : null;
-          return {
-            id: s.id,
-            name: s.name,
-            status: merged ? {
-              id: merged.status.id,
-              name: merged.status.name,
-              color: normalizeColor(merged.status.color),
-            } : {
-              id: s.status?.id,
-              name: s.status?.name || 'Unknown',
-              color: normalizeColor(s.status?.color),
-            },
-            thumb: getThumbnailUrl(s.thumbnail_id),
-            artist: allAssignees.join(', '),
-            tasks,
-            taskCount: tasks.length,
-          };
-        }));
+          if (tasks.length === 0) {
+            // Shot with no tasks — show shot itself
+            flat.push({
+              id: s.id,
+              shotId: s.id,
+              name: s.name,
+              type: '',
+              status: { id: s.status?.id, name: s.status?.name || 'Unknown', color: normalizeColor(s.status?.color) },
+              thumb: shotMap[s.id]?.thumb,
+              artist: '',
+              tasks: [],
+              assigneeIds: [],
+            });
+          } else {
+            for (const t of tasks) {
+              flat.push({
+                id: t.id,
+                shotId: s.id,
+                name: s.name,
+                type: t.type,
+                status: { id: t.status.id, name: t.status.name, color: normalizeColor(t.status.color) },
+                thumb: shotMap[s.id]?.thumb,
+                artist: t.assignee,
+                tasks: tasks,
+                assigneeIds: t.assigneeIds || [],
+              });
+            }
+          }
+        }
+        setShots(flat);
       })
       .catch(err => setError(err.message))
       .finally(() => setShotsLoading(false));
@@ -1004,7 +1020,8 @@ function ShotsTab() {
     const statusWithColor = { ...newStatus, color: normalizeColor(newStatus.color) };
     try {
       if (statusModal === "bulk") {
-        await bulkUpdateStatus([...selected], newStatus.id);
+        const shotIds = [...new Set(shots.filter(s => selected.has(s.id)).map(s => s.shotId))];
+        await bulkUpdateStatus(shotIds, newStatus.id);
         setShots(s => s.map(sh => selected.has(sh.id) ? { ...sh, status: statusWithColor } : sh));
         showToast(`${selected.size} shots \u2192 ${newStatus.name}`);
         setSelected(new Set());
@@ -1014,6 +1031,23 @@ function ShotsTab() {
         setDetailShot(prev => ({ ...prev, status: statusWithColor }));
         setShots(s => s.map(sh => sh.id === detailShot.id ? { ...sh, status: statusWithColor } : sh));
         showToast(`Status \u2192 ${newStatus.name}`);
+      } else if (statusModal === "task-status" && editingTask) {
+        await updateTaskStatus(editingTask.taskId, newStatus.id);
+        setShots(s => s.map(sh => {
+          if (sh.id !== editingTask.shotId) return sh;
+          const updatedTasks = (sh.tasks || []).map(t =>
+            t.id === editingTask.taskId ? { ...t, status: statusWithColor } : t
+          );
+          // If single-task shot, also update the shot-level status display
+          const merged = updatedTasks.length === 1 ? updatedTasks[0] : null;
+          return {
+            ...sh,
+            tasks: updatedTasks,
+            ...(merged ? { status: statusWithColor } : {}),
+          };
+        }));
+        showToast(`${editingTask.taskName} \u2192 ${newStatus.name}`);
+        setEditingTask(null);
       }
     } catch (err) {
       showToast("Status update failed");
@@ -1021,17 +1055,14 @@ function ShotsTab() {
     setStatusModal(null);
   };
 
-  // Compute which users are assigned to ANY selected shots' tasks
+  // Compute which users are assigned to ANY selected tasks
   const getAssignedUserIds = () => {
-    const selectedShots = shots.filter(s => selected.has(s.id));
-    if (selectedShots.length === 0) return new Set();
-    // Union — show anyone assigned to any task in any selected shot
+    const selectedItems = shots.filter(s => selected.has(s.id));
+    if (selectedItems.length === 0) return new Set();
     const all = new Set();
-    for (const s of selectedShots) {
-      for (const t of (s.tasks || [])) {
-        for (const id of (t.assigneeIds || [])) {
-          all.add(id);
-        }
+    for (const item of selectedItems) {
+      for (const id of (item.assigneeIds || [])) {
+        all.add(id);
       }
     }
     return all;
@@ -1041,26 +1072,32 @@ function ShotsTab() {
     const assignedIds = getAssignedUserIds();
     const isAssigned = assignedIds.has(user.id);
     const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
+    // Get unique shot IDs from selected tasks
+    const shotIds = [...new Set(shots.filter(s => selected.has(s.id)).map(s => s.shotId))];
     try {
       if (isAssigned) {
-        await unassignUserFromShots([...selected], user.id);
-        // Update local task data — remove this user from assigneeIds
+        await unassignUserFromShots(shotIds, user.id);
+        // Update local data
         setShots(prev => prev.map(sh => {
           if (!selected.has(sh.id)) return sh;
-          const updatedTasks = (sh.tasks || []).map(t => ({
-            ...t,
-            assigneeIds: (t.assigneeIds || []).filter(id => id !== user.id),
-            assignee: (t.assigneeIds || []).filter(id => id !== user.id).length > 0 ? t.assignee.replace(user.first_name, '').replace(/^, |, $|, ,/g, '') : '',
-          }));
           return {
             ...sh,
-            tasks: updatedTasks,
-            artist: [...new Set(updatedTasks.flatMap(t => t.assignee ? [t.assignee] : []))].join(', '),
+            assigneeIds: (sh.assigneeIds || []).filter(id => id !== user.id),
+            artist: sh.artist.split(', ').filter(n => n !== user.first_name).join(', '),
           };
         }));
         showToast(`Unassigned ${name}`);
       } else {
-        await assignUserToShots([...selected], user.id);
+        await assignUserToShots(shotIds, user.id);
+        // Update local data
+        setShots(prev => prev.map(sh => {
+          if (!selected.has(sh.id)) return sh;
+          return {
+            ...sh,
+            assigneeIds: [...(sh.assigneeIds || []), user.id],
+            artist: [sh.artist, user.first_name].filter(Boolean).join(', '),
+          };
+        }));
         showToast(`Assigned ${name}`);
       }
     } catch (err) {
@@ -1082,12 +1119,13 @@ function ShotsTab() {
   if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
 
   // ── Picker views (full screen) ──
-  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "filter" || statusModal === "assignee") {
+  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "filter" || statusModal === "assignee") {
     const isFilter = statusModal === "filter";
     const isAssignee = statusModal === "assignee";
     const title = isFilter ? "Filter by Status"
       : isAssignee ? `Assign ${selected.size} shots`
       : statusModal === "bulk" ? `Set status for ${selected.size} shots`
+      : statusModal === "task-status" && editingTask ? editingTask.taskName
       : "Change Status";
 
     const items = isAssignee ? members : statuses;
@@ -1130,6 +1168,7 @@ function ShotsTab() {
               <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
               {isFilter && statusFilter === s.name && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
               {statusModal === "shot-status" && detailShot?.status?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+              {statusModal === "task-status" && editingTask?.currentStatusId === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           ))}
           {items.length === 0 && (
@@ -1198,11 +1237,9 @@ function ShotsTab() {
       <div className="header">
         {multiSelect ? (
           <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>Cancel</button>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.size} selected</span>
-            </div>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.size} selected</span>
             <div className="header-right" style={{ gap: 8 }}>
+              <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>None</button>
               <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={selectAll}>All</button>
               {selected.size > 0 && (<>
                 <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Status</button>
@@ -1273,22 +1310,12 @@ function ShotsTab() {
               : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>&#127916;</div>
             }
             <div className="shot-list-info">
-              <div className="shot-list-name">{shot.name}</div>
+              <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}</div>
               {shot.artist && <div className="shot-list-artist">{shot.artist}</div>}
             </div>
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />
             </div>
-            {shot.tasks && shot.tasks.length > 0 && (
-              <div className="shot-list-tasks">
-                {shot.tasks.map(t => (
-                  <div key={t.id} className="shot-task-row">
-                    <span className="shot-task-name">{t.type || t.name}</span>
-                    <StatusPill status={t.status} small />
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         ))}
       </div>

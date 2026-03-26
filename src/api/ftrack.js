@@ -243,6 +243,10 @@ export async function updateVersionStatus(versionId, statusId) {
   return getSession().update('AssetVersion', [versionId], { status_id: statusId });
 }
 
+export async function updateTaskStatus(taskId, statusId) {
+  return getSession().update('Task', [taskId], { status_id: statusId });
+}
+
 export async function createNote(parentId, parentType, text, { frameNumber, annotationBlob, categoryId } = {}) {
   const s = getSession();
   const noteData = {
