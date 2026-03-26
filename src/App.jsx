@@ -2,8 +2,8 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   createSession,
   fetchReviews, fetchReviewShots,
-  fetchProjects, fetchShots, fetchShotAssignees, fetchStatuses, fetchShotStatuses, fetchShotVersions,
-  fetchProjectMembers, assignUserToShots,
+  fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
+  fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
@@ -837,6 +837,7 @@ function ShotsTab() {
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [player, setPlayer] = useState(null);
   const [members, setMembers] = useState([]);
+  const [selectedTask, setSelectedTask] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -885,19 +886,31 @@ function ShotsTab() {
       })
       .catch(err => console.warn('[ShotsTab] Members error:', err));
 
-    Promise.all([fetchShots(selectedProjectId), fetchShotAssignees(selectedProjectId).catch(() => ({}))])
-      .then(([data, assignees]) => {
-        setShots(data.map(s => ({
-          id: s.id,
-          name: s.name,
-          status: {
-            id: s.status?.id,
-            name: s.status?.name || 'Unknown',
-            color: normalizeColor(s.status?.color),
-          },
-          thumb: getThumbnailUrl(s.thumbnail_id),
-          artist: assignees[s.id] || '',
-        })));
+    Promise.all([fetchShots(selectedProjectId), fetchProjectTasks(selectedProjectId).catch(() => ({}))])
+      .then(([data, tasksByShot]) => {
+        setShots(data.map(s => {
+          const tasks = tasksByShot[s.id] || [];
+          const allAssignees = [...new Set(tasks.flatMap(t => t.assignee ? [t.assignee] : []))];
+          // If single task, merge task info into the shot card
+          const merged = tasks.length === 1 ? tasks[0] : null;
+          return {
+            id: s.id,
+            name: s.name,
+            status: merged ? {
+              id: merged.status.id,
+              name: merged.status.name,
+              color: normalizeColor(merged.status.color),
+            } : {
+              id: s.status?.id,
+              name: s.status?.name || 'Unknown',
+              color: normalizeColor(s.status?.color),
+            },
+            thumb: getThumbnailUrl(s.thumbnail_id),
+            artist: allAssignees.join(', '),
+            tasks,
+            taskCount: tasks.length,
+          };
+        }));
       })
       .catch(err => setError(err.message))
       .finally(() => setShotsLoading(false));
@@ -934,25 +947,28 @@ function ShotsTab() {
 
   const openShotDetail = async (shot) => {
     setDetailShot(shot);
-    setVersionsLoading(true);
-    try {
-      const vers = await fetchShotVersions(shot.id);
-      setVersions(vers.map(v => ({
-        id: v.id,
-        version: v.version,
-        status: {
-          id: v.status?.id,
-          name: v.status?.name || 'Unknown',
-          color: normalizeColor(v.status?.color),
-        },
-        artist: v.user?.first_name || '',
-        date: formatDate(v.date),
-        thumb: getThumbnailUrl(v.thumbnail_id),
-      })));
-    } catch (err) {
-      showToast('Failed to load versions');
-    } finally {
-      setVersionsLoading(false);
+    // If single task, load versions immediately
+    if (shot.taskCount <= 1) {
+      setVersionsLoading(true);
+      try {
+        const vers = await fetchShotVersions(shot.id);
+        setVersions(vers.map(v => ({
+          id: v.id,
+          version: v.version,
+          status: {
+            id: v.status?.id,
+            name: v.status?.name || 'Unknown',
+            color: normalizeColor(v.status?.color),
+          },
+          artist: v.user?.first_name || '',
+          date: formatDate(v.date),
+          thumb: getThumbnailUrl(v.thumbnail_id),
+        })));
+      } catch (err) {
+        showToast('Failed to load versions');
+      } finally {
+        setVersionsLoading(false);
+      }
     }
   };
 
@@ -990,17 +1006,51 @@ function ShotsTab() {
     setStatusModal(null);
   };
 
-  const applyAssignee = async (user) => {
-    try {
-      await assignUserToShots([...selected], user.id);
-      const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
-      showToast(`${selected.size} shots \u2192 ${name}`);
-      setSelected(new Set());
-      setMultiSelect(false);
-    } catch (err) {
-      showToast("Assign failed");
+  // Compute which users are assigned to ALL selected shots' tasks
+  const getAssignedUserIds = () => {
+    const selectedShots = shots.filter(s => selected.has(s.id));
+    if (selectedShots.length === 0) return new Set();
+    // Get assignee IDs per shot from task data
+    const perShot = selectedShots.map(s =>
+      new Set((s.tasks || []).flatMap(t => t.assigneeId ? [t.assigneeId] : []))
+    );
+    // Intersect — user must be assigned to tasks in ALL selected shots
+    if (perShot.length === 0) return new Set();
+    let common = perShot[0];
+    for (let i = 1; i < perShot.length; i++) {
+      common = new Set([...common].filter(id => perShot[i].has(id)));
     }
-    setStatusModal(null);
+    return common;
+  };
+
+  const toggleAssignee = async (user) => {
+    const assignedIds = getAssignedUserIds();
+    const isAssigned = assignedIds.has(user.id);
+    const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
+    try {
+      if (isAssigned) {
+        await unassignUserFromShots([...selected], user.id);
+        // Update local task data
+        setShots(prev => prev.map(sh => {
+          if (!selected.has(sh.id)) return sh;
+          return {
+            ...sh,
+            tasks: (sh.tasks || []).map(t =>
+              t.assigneeId === user.id ? { ...t, assignee: '', assigneeId: null } : t
+            ),
+            artist: (sh.tasks || [])
+              .filter(t => t.assigneeId !== user.id)
+              .map(t => t.assignee).filter(Boolean).join(', '),
+          };
+        }));
+        showToast(`Unassigned ${name}`);
+      } else {
+        await assignUserToShots([...selected], user.id);
+        showToast(`Assigned ${name}`);
+      }
+    } catch (err) {
+      showToast(isAssigned ? "Unassign failed" : "Assign failed");
+    }
   };
 
   const selectAll = () => setSelected(new Set(filtered.map(s => s.id)));
@@ -1040,17 +1090,23 @@ function ShotsTab() {
               {!statusFilter && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           )}
-          {isAssignee && members.map(u => (
-            <div key={u.id} className="shot-list-item" onClick={() => applyAssignee(u)}>
-              <div className="avatar" style={{ width: 28, height: 28, fontSize: 12, flexShrink: 0 }}>
-                {(u.first_name?.[0] || u.username?.[0] || '?').toUpperCase()}
-              </div>
-              <div className="shot-list-info">
-                <div className="shot-list-name">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</div>
-                {u.username && <div className="shot-list-artist">{u.username}</div>}
-              </div>
-            </div>
-          ))}
+          {isAssignee && (() => {
+            const assignedIds = getAssignedUserIds();
+            return members.map(u => {
+              const isOn = assignedIds.has(u.id);
+              return (
+                <div key={u.id} className="shot-list-item" onClick={() => toggleAssignee(u)} style={isOn ? { background: 'rgba(76,175,80,.1)' } : {}}>
+                  <div className={`select-circle ${isOn ? "checked" : ""}`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
+                    {isOn && <span style={{ fontSize: 12, color: "#fff" }}>&#10003;</span>}
+                  </div>
+                  <div className="shot-list-info">
+                    <div className="shot-list-name">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</div>
+                    {u.username && <div className="shot-list-artist">{u.username}</div>}
+                  </div>
+                </div>
+              );
+            });
+          })()}
           {!isAssignee && statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={() => {
               if (isFilter) {

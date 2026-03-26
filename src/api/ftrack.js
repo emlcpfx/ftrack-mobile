@@ -66,7 +66,7 @@ export async function fetchProjects() {
 export async function fetchShots(projectId) {
   const s = getSession();
   const result = await s.query(
-    `select id, name,
+    `select id, name, description,
             status.id, status.name, status.color,
             thumbnail_id
      from Shot
@@ -77,32 +77,38 @@ export async function fetchShots(projectId) {
   return result.data;
 }
 
-export async function fetchShotAssignees(projectId) {
+export async function fetchProjectTasks(projectId) {
   const s = getSession();
   const result = await s.query(
-    `select parent_id, assignments.resource.first_name, assignments.resource.last_name
+    `select id, name, parent_id, type.name,
+            status.id, status.name, status.color,
+            assignments.resource.id, assignments.resource.first_name
      from Task
      where project.id is "${projectId}"`
   );
-  // Group assignee names by shot (parent_id)
+  // Group tasks by parent shot ID
   const byShot = {};
   for (const task of result.data) {
     const shotId = task.parent_id;
-    if (!shotId || !task.assignments) continue;
-    for (const appt of task.assignments) {
-      const name = appt.resource?.first_name || '';
-      if (name) {
-        if (!byShot[shotId]) byShot[shotId] = new Set();
-        byShot[shotId].add(name);
-      }
-    }
+    if (!shotId) continue;
+    if (!byShot[shotId]) byShot[shotId] = [];
+    const assignees = (task.assignments || [])
+      .map(a => a.resource?.first_name)
+      .filter(Boolean);
+    byShot[shotId].push({
+      id: task.id,
+      name: task.name,
+      type: task.type?.name || '',
+      status: {
+        id: task.status?.id,
+        name: task.status?.name || 'Unknown',
+        color: task.status?.color || '',
+      },
+      assignee: assignees.join(', '),
+      assigneeId: (task.assignments || [])[0]?.resource?.id || null,
+    });
   }
-  // Convert sets to comma-joined strings
-  const out = {};
-  for (const [id, names] of Object.entries(byShot)) {
-    out[id] = [...names].join(', ');
-  }
-  return out;
+  return byShot;
 }
 
 export async function fetchStatuses() {
@@ -165,27 +171,36 @@ export async function fetchProjectMembers() {
 
 export async function assignUserToShots(shotIds, userId) {
   const s = getSession();
-  // Assignments go on Tasks under shots, not shots directly.
-  // Find all tasks under the given shots.
   const tasks = await s.query(
-    `select id, parent_id from Task where parent_id in (${shotIds.map(id => `"${id}"`).join(',')})`
+    `select id from Task where parent_id in (${shotIds.map(id => `"${id}"`).join(',')})`
   );
-  const results = [];
   for (const task of tasks.data) {
-    // Check existing
     const existing = await s.query(
       `select id from Appointment where context_id is "${task.id}" and resource_id is "${userId}"`
     );
     if (existing.data.length === 0) {
-      const r = await s.create('Appointment', {
+      await s.create('Appointment', {
         context_id: task.id,
         resource_id: userId,
         type: 'assignment',
       });
-      results.push(r);
     }
   }
-  return results;
+}
+
+export async function unassignUserFromShots(shotIds, userId) {
+  const s = getSession();
+  const tasks = await s.query(
+    `select id from Task where parent_id in (${shotIds.map(id => `"${id}"`).join(',')})`
+  );
+  for (const task of tasks.data) {
+    const existing = await s.query(
+      `select id from Appointment where context_id is "${task.id}" and resource_id is "${userId}"`
+    );
+    for (const appt of existing.data) {
+      await s.delete('Appointment', [appt.id]);
+    }
+  }
 }
 
 // ── Versions & Components ─────────────────────────────────────────────────────
