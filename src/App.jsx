@@ -81,6 +81,10 @@ const css = `
   .header { padding:14px 20px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--surface); }
   .header-title { font-family:var(--font-body); font-size:18px; font-weight:700; }
   .header-title span { color:var(--accent); }
+  .header-brand { display:flex; align-items:center; gap:12px; }
+  .header-brand img { height:22px; filter: brightness(0) invert(1); }
+  .header-brand .header-divider { width:1px; height:20px; background:var(--border); }
+  .header-brand .header-vfxtools { font-family:'VT323', monospace; font-size:1.15rem; font-weight:400; color:var(--muted); letter-spacing:0.12em; line-height:1; }
   .header-right { display:flex; align-items:center; gap:10px; }
   .avatar { width:32px; height:32px; border-radius:50%; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:#fff; }
 
@@ -786,7 +790,11 @@ function ReviewsTab({ userInitial }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div className="header">
-        <div className="header-title">f<span style={{ color: "var(--accent)" }}>track</span></div>
+        <div className="header-brand">
+          <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
+          <div className="header-divider" />
+          <div className="header-vfxtools">VFX Tools</div>
+        </div>
         <div className="header-right">
           <div className="avatar">{userInitial}</div>
         </div>
@@ -985,6 +993,7 @@ function ShotsTab() {
   if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
 
   // ── Status picker view (full screen, no modal) ──
+  console.log('[ShotsTab] render — statusModal:', statusModal, 'statuses:', statuses.length, 'selected:', selected.size);
   if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "filter") {
     const isFilter = statusModal === "filter";
     const title = isFilter ? "Filter by Status"
@@ -1083,7 +1092,11 @@ function ShotsTab() {
       <Toast msg={toast} />
 
       <div className="header">
-        <div className="header-title">Shots</div>
+        <div className="header-brand">
+          <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
+          <div className="header-divider" />
+          <div className="header-vfxtools">VFX Tools</div>
+        </div>
         <div className="header-right">
           {multiSelect ? (
             <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>Cancel</button>
@@ -1116,15 +1129,6 @@ function ShotsTab() {
           {statusFilter ? statusFilter.split(" ")[0] : "Filter"}
         </button>
       </div>
-
-      {/* Bulk bar */}
-      {multiSelect && selected.size > 0 && (
-        <div className="bulk-bar">
-          <div className="bulk-count">{selected.size} selected</div>
-          <button className="bulk-action" onClick={selectAll}>All</button>
-          <button className="bulk-action" onClick={() => setStatusModal("bulk")}>Set Status</button>
-        </div>
-      )}
 
       <div className="scroll">
         {shotsLoading && <div className="loading">Loading shots...</div>}
@@ -1163,6 +1167,15 @@ function ShotsTab() {
           </div>
         ))}
       </div>
+
+      {/* Bulk bar — pinned to bottom */}
+      {multiSelect && selected.size > 0 && (
+        <div className="bulk-bar" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 50 }}>
+          <div className="bulk-count">{selected.size} selected</div>
+          <button className="bulk-action" onClick={selectAll}>All</button>
+          <button className="bulk-action" onClick={() => setStatusModal("bulk")}>Set Status</button>
+        </div>
+      )}
 
     </div>
   );
