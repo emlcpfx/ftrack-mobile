@@ -1053,14 +1053,14 @@ function ShotsTab() {
     const statusWithColor = { ...newStatus, color: normalizeColor(newStatus.color) };
     try {
       if (statusModal === "bulk") {
-        const shotIds = [...new Set(shots.filter(s => selected.has(s.id)).map(s => s.shotId))];
-        await bulkUpdateStatus(shotIds, newStatus.id);
+        const taskIds = [...selected];
+        await Promise.all(taskIds.map(id => updateTaskStatus(id, newStatus.id)));
         setShots(s => s.map(sh => selected.has(sh.id) ? { ...sh, status: statusWithColor } : sh));
         showToast(`${selected.size} shots \u2192 ${newStatus.name}`);
         setSelected(new Set());
         setMultiSelect(false);
       } else if (statusModal === "shot-status") {
-        await updateShotStatus(detailShot.id, newStatus.id);
+        await updateTaskStatus(detailShot.id, newStatus.id);
         setDetailShot(prev => ({ ...prev, status: statusWithColor }));
         setShots(s => s.map(sh => sh.id === detailShot.id ? { ...sh, status: statusWithColor } : sh));
         showToast(`Status \u2192 ${newStatus.name}`);
