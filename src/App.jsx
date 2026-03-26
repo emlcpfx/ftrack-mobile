@@ -61,7 +61,7 @@ const css = `
   .brand-logo { display:flex; align-items:center; gap:12px; }
   .brand-logo img { filter: brightness(0) invert(1); }
   .brand-logo .brand-divider { width:1px; background:var(--border); }
-  .brand-logo .brand-vfxtools { font-family:'VT323', monospace; font-weight:400; color:#fff; letter-spacing:0.02em; line-height:1; }
+  .brand-logo .brand-vfxtools { font-family:'VT323', monospace; font-weight:400; color:#fff; letter-spacing:-0.01em; line-height:1; text-decoration:none; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:4px 8px; }
   .brand-logo--lg img { height:28px; }
   .brand-logo--lg .brand-divider { height:24px; }
   .brand-logo--lg .brand-vfxtools { font-size:1.85rem; }
@@ -70,9 +70,8 @@ const css = `
   .brand-logo--sm .brand-vfxtools { font-size:1.5rem; }
   .login-brand { margin-bottom:8px; }
   .login-form { width:100%; display:flex; flex-direction:column; gap:14px; }
-  .login-tabs { display:flex; background:var(--surface); border-radius:8px; padding:3px; gap:2px; }
-  .login-tab { flex:1; padding:8px; text-align:center; font-size:13px; font-family:var(--font-body); font-weight:500; border-radius:6px; border:none; cursor:pointer; background:transparent; color:var(--muted); transition:all .2s; }
-  .login-tab.active { background:var(--card); color:var(--text); }
+  .api-key-link { display:block; font-size:12px; color:var(--accent); text-decoration:none; margin-top:6px; }
+  .api-key-link:active { color:var(--accent2); }
   .field { display:flex; flex-direction:column; gap:6px; }
   .field label { font-size:11px; font-weight:600; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); }
   .field input { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:var(--font-body); font-size:14px; color:var(--text); outline:none; transition:border-color .2s; }
@@ -260,18 +259,16 @@ function BrandLogo({ size = "sm" }) {
     <div className={`brand-logo brand-logo--${size}`}>
       <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
       <div className="brand-divider" />
-      <div className="brand-vfxtools">VFX Tools</div>
+      <a className="brand-vfxtools" href="https://www.thevfxtools.com" target="_blank" rel="noopener noreferrer">VFX Tools</a>
     </div>
   );
 }
 
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [mode, setMode] = useState("apikey");
   const [server, setServer] = useState("https://clean-plate-fx.ftrackapp.com");
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -279,15 +276,8 @@ function LoginScreen({ onLogin }) {
     setLoading(true);
     setError("");
     try {
-      let authUser = user;
-      let authKey = apiKey;
-      if (mode === "password") {
-        const creds = await loginWithPassword({ serverUrl: server, username: user, password: pass });
-        authUser = creds.apiUser;
-        authKey = creds.apiKey;
-      }
-      await createSession({ serverUrl: server, apiUser: authUser, apiKey: authKey });
-      onLogin({ server, user: authUser, apiKey: authKey });
+      await createSession({ serverUrl: server, apiUser: user, apiKey });
+      onLogin({ server, user, apiKey });
     } catch (err) {
       setError(err.message || "Connection failed");
     } finally {
@@ -295,7 +285,11 @@ function LoginScreen({ onLogin }) {
     }
   };
 
-  const ready = server && user && (mode === "apikey" ? apiKey : pass);
+  const apiKeysUrl = server
+    ? `${server.replace(/\/+$/, '')}/#view=my_account&tab=api_keys`
+    : null;
+
+  const ready = server && user && apiKey;
 
   return (
     <div className="login">
@@ -305,27 +299,21 @@ function LoginScreen({ onLogin }) {
       <form className="login-form" onSubmit={e => { e.preventDefault(); handleLogin(); }}>
         <div className="field">
           <label>Server URL</label>
-          <input placeholder="yoursite.ftrackapp.com" value={server} onChange={e => setServer(e.target.value)} />
-        </div>
-        <div className="login-tabs">
-          <button className={`login-tab ${mode === "apikey" ? "active" : ""}`} onClick={() => setMode("apikey")}>API Key</button>
-          <button className={`login-tab ${mode === "password" ? "active" : ""}`} onClick={() => setMode("password")}>Password</button>
+          <input placeholder="yoursite.ftrackapp.com" value={server} onChange={e => setServer(e.target.value)} autoComplete="url" />
         </div>
         <div className="field">
           <label>Username</label>
-          <input placeholder="you@studio.com" value={user} onChange={e => setUser(e.target.value)} />
+          <input placeholder="you@studio.com" value={user} onChange={e => setUser(e.target.value)} autoComplete="username" />
         </div>
-        {mode === "apikey" ? (
-          <div className="field">
-            <label>API Key</label>
-            <input placeholder="Your ftrack API key" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" />
-          </div>
-        ) : (
-          <div className="field">
-            <label>Password</label>
-            <input placeholder="Your password" value={pass} onChange={e => setPass(e.target.value)} type="password" />
-          </div>
-        )}
+        <div className="field">
+          <label>API Key</label>
+          <input placeholder="Your ftrack API key" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" autoComplete="current-password" />
+          {apiKeysUrl && (
+            <a href={apiKeysUrl} target="_blank" rel="noopener noreferrer" className="api-key-link">
+              Get your API key from ftrack →
+            </a>
+          )}
+        </div>
         {error && <div className="error-msg">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading || !ready}>
           {loading ? "Connecting..." : "Connect"}
@@ -1096,14 +1084,27 @@ function ShotsTab() {
       <Toast msg={toast} />
 
       <div className="header">
-        <BrandLogo />
-        <div className="header-right">
-          {multiSelect ? (
-            <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>Cancel</button>
-          ) : (
-            <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={() => setMultiSelect(true)}>Select</button>
-          )}
-        </div>
+        {multiSelect ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>Cancel</button>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{selected.size} selected</span>
+            </div>
+            <div className="header-right" style={{ gap: 8 }}>
+              <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={selectAll}>All</button>
+              {selected.size > 0 && (
+                <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Set Status</button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <BrandLogo />
+            <div className="header-right">
+              <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={() => setMultiSelect(true)}>Select</button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Project Picker */}
@@ -1167,15 +1168,6 @@ function ShotsTab() {
           </div>
         ))}
       </div>
-
-      {/* Bulk bar — pinned above bottom nav */}
-      {multiSelect && selected.size > 0 && (
-        <div className="bulk-bar" style={{ position: 'absolute', bottom: 68, left: 0, right: 0, zIndex: 50 }}>
-          <div className="bulk-count">{selected.size} selected</div>
-          <button className="bulk-action" onClick={selectAll}>All</button>
-          <button className="bulk-action" onClick={() => setStatusModal("bulk")}>Set Status</button>
-        </div>
-      )}
 
     </div>
   );
