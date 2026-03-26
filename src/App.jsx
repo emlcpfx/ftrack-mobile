@@ -87,7 +87,7 @@ const css = `
   .avatar { width:32px; height:32px; border-radius:50%; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:#fff; }
 
   /* ── Scroll area ── */
-  .scroll { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:80px; }
+  .scroll { flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; padding-bottom:80px; min-height:0; }
   .scroll::-webkit-scrollbar { display:none; }
 
   /* ── Bottom Nav ── */
@@ -181,8 +181,8 @@ const css = `
   .select-circle { width:22px; height:22px; border-radius:50%; border:2px solid var(--border); flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:all .15s; }
   .select-circle.checked { background:var(--accent); border-color:var(--accent); }
   .shot-list-thumb { width:64px; height:36px; border-radius:6px; object-fit:cover; background:var(--card2); flex-shrink:0; }
-  .shot-list-info { flex:1; min-width:0; }
-  .shot-list-name { font-size:14px; font-weight:600; }
+  .shot-list-info { flex:1; min-width:0; overflow:hidden; }
+  .shot-list-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .shot-list-artist { font-size:12px; color:var(--muted); margin-top:2px; }
   .shot-list-tasks { width:100%; padding-left:76px; display:flex; flex-direction:column; gap:4px; margin-top:-2px; }
   .shot-task-row { display:flex; align-items:center; justify-content:space-between; }
@@ -1343,11 +1343,11 @@ function ShotsTab() {
               : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>&#127916;</div>
             }
             <div className="shot-list-info">
-              <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}{shot.artist ? <span style={{ fontWeight: 400, color: 'var(--accent)', fontSize: 12 }}> / {shot.artist}</span> : ''}</div>
-              {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7 }}>{shot.description}</div>}
-            </div>
-            <div className="shot-list-status">
-              <StatusPill status={shot.status} small />
+              <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}{shot.artist ? ` / ${shot.artist}` : ''}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <StatusPill status={shot.status} small />
+                {shot.description && <span className="shot-list-artist" style={{ fontStyle: 'italic', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{shot.description}</span>}
+              </div>
             </div>
           </div>
         ))}
