@@ -226,7 +226,7 @@ function Toast({ msg }) {
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState("apikey");
-  const [server, setServer] = useState("");
+  const [server, setServer] = useState("https://clean-plate-fx.ftrackapp.com");
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
