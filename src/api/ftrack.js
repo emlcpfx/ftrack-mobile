@@ -63,6 +63,7 @@ export async function fetchTaskStatusesByShots(shotIds) {
   for (const t of result.data) {
     if (!byShot[t.parent_id]) {
       byShot[t.parent_id] = {
+        taskId: t.id,
         id: t.status?.id,
         name: t.status?.name || 'Unknown',
         color: t.status?.color || '',

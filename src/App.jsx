@@ -35,6 +35,7 @@ const css = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=VT323&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
 
   :root {
     --bg: #1a1d21;
@@ -55,7 +56,7 @@ const css = `
 
   body { background: var(--bg); color: var(--text); font-family: var(--font-body); overflow: hidden; font-size:14px; -webkit-font-smoothing:antialiased; }
 
-  .app { display: flex; flex-direction: column; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+  .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); overflow: hidden; }
 
   /* ── Login ── */
   .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #1f2225 0%, var(--bg) 60%); }
@@ -555,7 +556,11 @@ function PlayerScreen({ shot, onClose }) {
 
     if (matched) {
       try {
-        await updateVersionStatus(shot.versionId, matched.id);
+        if (shot.taskId) {
+          await updateTaskStatus(shot.taskId, matched.id);
+        } else {
+          await updateVersionStatus(shot.versionId, matched.id);
+        }
         showToast(type === "approve" ? "Approved" : "Changes requested");
       } catch {
         showToast("Status update failed");
@@ -564,6 +569,35 @@ function PlayerScreen({ shot, onClose }) {
       showToast(type === "approve" ? "Approved (local)" : "Changes requested (local)");
     }
   };
+
+  if (statusPicker) {
+    return (
+      <div className="player-screen">
+        <div className="header">
+          <div className="back-btn" onClick={() => setStatusPicker(false)}>&#8592; Back</div>
+          <div className="header-title" style={{ fontSize: 15 }}>Change Status</div>
+        </div>
+        <div className="scroll">
+          {statuses.map(s => (
+            <div key={s.id} className="shot-list-item" onClick={async () => {
+              try {
+                await updateVersionStatus(shot.versionId, s.id);
+                setCurrentStatus({ id: s.id, name: s.name, color: normalizeColor(s.color) });
+                showToast(`Status \u2192 ${s.name}`);
+              } catch {
+                showToast("Status update failed");
+              }
+              setStatusPicker(false);
+            }}>
+              <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+              <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
+              {currentStatus?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="player-screen">
@@ -578,34 +612,6 @@ function PlayerScreen({ shot, onClose }) {
           <StatusPill status={currentStatus} small />
         </div>
       </div>
-
-      {/* Status Picker Modal */}
-      {statusPicker && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 300, background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-          <div className="header">
-            <div className="back-btn" onClick={() => setStatusPicker(false)}>&#8592; Back</div>
-            <div className="header-title" style={{ fontSize: 15 }}>Change Status</div>
-          </div>
-          <div className="scroll">
-            {statuses.map(s => (
-              <div key={s.id} className="shot-list-item" onClick={async () => {
-                try {
-                  await updateVersionStatus(shot.versionId, s.id);
-                  setCurrentStatus({ id: s.id, name: s.name, color: normalizeColor(s.color) });
-                  showToast(`Status \u2192 ${s.name}`);
-                } catch {
-                  showToast("Status update failed");
-                }
-                setStatusPicker(false);
-              }}>
-                <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
-                <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
-                {currentStatus?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Video / Canvas area */}
       <div className="video-area">
@@ -780,6 +786,7 @@ function ReviewsTab({ userInitial }) {
           hasVersion: !!rso.asset_version,
           versionNum: rso.asset_version?.version || 0,
           versionId: rso.asset_version?.id,
+          taskId: taskStatus?.taskId || null,
         };
       }));
     } catch (err) {
@@ -796,7 +803,6 @@ function ReviewsTab({ userInitial }) {
 
   const closePlayer = () => {
     setPlayer(null);
-    history.back();
   };
 
   const closeDetail = () => {
@@ -808,7 +814,7 @@ function ReviewsTab({ userInitial }) {
   if (player) return <PlayerScreen shot={player} onClose={closePlayer} />;
 
   if (detail) return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div className="header">
         <div className="back-btn" onClick={closeDetail}>&#8592; Reviews</div>
         <div className="header-title" style={{ fontSize: 15 }}>{detail.name}</div>
@@ -844,7 +850,7 @@ function ReviewsTab({ userInitial }) {
   );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
       <div className="header">
         <BrandLogo />
         <div className="header-right">
@@ -1179,7 +1185,7 @@ function ShotsTab() {
     const assignedIds = isAssignee ? getAssignedUserIds() : new Set();
 
     return (
-      <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         <div className="header">
           <div className="back-btn" onClick={() => setStatusModal(null)}>&#8592; Back</div>
           <div className="header-title" style={{ fontSize: 15 }}>{title}</div>
@@ -1278,7 +1284,7 @@ function ShotsTab() {
 
   // ── Shot list view ──
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, position: "relative" }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}>
       <Toast msg={toast} />
 
       <div className="header">
@@ -1428,7 +1434,7 @@ export default function App() {
     <>
       <style>{css}</style>
       <div className="app">
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", minHeight: 0 }}>
           {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
           {tab === "shots" && <ShotsTab />}
         </div>
