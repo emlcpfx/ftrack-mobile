@@ -175,7 +175,7 @@ const css = `
   .bulk-count { font-weight:600; font-size:14px; flex:1; color:#fff; }
   .bulk-action { background:rgba(255,255,255,.2); border:none; border-radius:6px; padding:6px 12px; font-family:var(--font-body); font-size:12px; font-weight:500; color:#fff; cursor:pointer; }
   .bulk-action:active { background:rgba(255,255,255,.35); }
-  .shot-list-item { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; user-select:none; }
+  .shot-list-item { display:flex; flex-wrap:wrap; align-items:center; gap:10px 12px; padding:12px 16px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; user-select:none; }
   .shot-list-item.selected { background:rgba(0,151,206,.1); }
   .shot-list-item:active { background:var(--surface); }
   .select-circle { width:22px; height:22px; border-radius:50%; border:2px solid var(--border); flex-shrink:0; display:flex; align-items:center; justify-content:center; transition:all .15s; }
@@ -184,6 +184,9 @@ const css = `
   .shot-list-info { flex:1; min-width:0; }
   .shot-list-name { font-size:14px; font-weight:600; }
   .shot-list-artist { font-size:12px; color:var(--muted); margin-top:2px; }
+  .shot-list-tasks { width:100%; padding-left:76px; display:flex; flex-direction:column; gap:4px; margin-top:-2px; }
+  .shot-task-row { display:flex; align-items:center; justify-content:space-between; }
+  .shot-task-name { font-size:12px; color:var(--muted); }
   .shot-list-status { flex-shrink:0; }
   .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; }
 
@@ -263,9 +266,19 @@ function BrandLogo({ size = "sm" }) {
   );
 }
 
+// ─── Domain → Server mapping ──────────────────────────────────────────────────
+const DOMAIN_SERVER_MAP = {
+  'review.cleanplatefx.com': 'https://clean-plate-fx.ftrackapp.com',
+};
+
+function getDefaultServerUrl() {
+  return DOMAIN_SERVER_MAP[window.location.hostname] || '';
+}
+
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
-  const [server, setServer] = useState("https://clean-plate-fx.ftrackapp.com");
+  const defaultServer = getDefaultServerUrl();
+  const [server, setServer] = useState(defaultServer);
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
   const [loading, setLoading] = useState(false);
@@ -296,10 +309,12 @@ function LoginScreen({ onLogin }) {
         <BrandLogo size="lg" />
       </div>
       <form className="login-form" onSubmit={e => { e.preventDefault(); handleLogin(); }}>
-        <div className="field">
-          <label>Server URL</label>
-          <input placeholder="yoursite.ftrackapp.com" value={server} onChange={e => setServer(e.target.value)} autoComplete="url" />
-        </div>
+        {!defaultServer && (
+          <div className="field">
+            <label>Server URL</label>
+            <input placeholder="yoursite.ftrackapp.com" value={server} onChange={e => setServer(e.target.value)} autoComplete="url" />
+          </div>
+        )}
         <div className="field">
           <label>Username</label>
           <input placeholder="you@studio.com" value={user} onChange={e => setUser(e.target.value)} autoComplete="username" />
@@ -1006,21 +1021,20 @@ function ShotsTab() {
     setStatusModal(null);
   };
 
-  // Compute which users are assigned to ALL selected shots' tasks
+  // Compute which users are assigned to ANY selected shots' tasks
   const getAssignedUserIds = () => {
     const selectedShots = shots.filter(s => selected.has(s.id));
     if (selectedShots.length === 0) return new Set();
-    // Get assignee IDs per shot from task data
-    const perShot = selectedShots.map(s =>
-      new Set((s.tasks || []).flatMap(t => t.assigneeId ? [t.assigneeId] : []))
-    );
-    // Intersect — user must be assigned to tasks in ALL selected shots
-    if (perShot.length === 0) return new Set();
-    let common = perShot[0];
-    for (let i = 1; i < perShot.length; i++) {
-      common = new Set([...common].filter(id => perShot[i].has(id)));
+    // Union — show anyone assigned to any task in any selected shot
+    const all = new Set();
+    for (const s of selectedShots) {
+      for (const t of (s.tasks || [])) {
+        for (const id of (t.assigneeIds || [])) {
+          all.add(id);
+        }
+      }
     }
-    return common;
+    return all;
   };
 
   const toggleAssignee = async (user) => {
@@ -1030,17 +1044,18 @@ function ShotsTab() {
     try {
       if (isAssigned) {
         await unassignUserFromShots([...selected], user.id);
-        // Update local task data
+        // Update local task data — remove this user from assigneeIds
         setShots(prev => prev.map(sh => {
           if (!selected.has(sh.id)) return sh;
+          const updatedTasks = (sh.tasks || []).map(t => ({
+            ...t,
+            assigneeIds: (t.assigneeIds || []).filter(id => id !== user.id),
+            assignee: (t.assigneeIds || []).filter(id => id !== user.id).length > 0 ? t.assignee.replace(user.first_name, '').replace(/^, |, $|, ,/g, '') : '',
+          }));
           return {
             ...sh,
-            tasks: (sh.tasks || []).map(t =>
-              t.assigneeId === user.id ? { ...t, assignee: '', assigneeId: null } : t
-            ),
-            artist: (sh.tasks || [])
-              .filter(t => t.assigneeId !== user.id)
-              .map(t => t.assignee).filter(Boolean).join(', '),
+            tasks: updatedTasks,
+            artist: [...new Set(updatedTasks.flatMap(t => t.assignee ? [t.assignee] : []))].join(', '),
           };
         }));
         showToast(`Unassigned ${name}`);
@@ -1076,6 +1091,7 @@ function ShotsTab() {
       : "Change Status";
 
     const items = isAssignee ? members : statuses;
+    const assignedIds = isAssignee ? getAssignedUserIds() : new Set();
 
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
@@ -1090,23 +1106,17 @@ function ShotsTab() {
               {!statusFilter && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           )}
-          {isAssignee && (() => {
-            const assignedIds = getAssignedUserIds();
-            return members.map(u => {
-              const isOn = assignedIds.has(u.id);
-              return (
-                <div key={u.id} className="shot-list-item" onClick={() => toggleAssignee(u)} style={isOn ? { background: 'rgba(76,175,80,.1)' } : {}}>
-                  <div className={`select-circle ${isOn ? "checked" : ""}`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
-                    {isOn && <span style={{ fontSize: 12, color: "#fff" }}>&#10003;</span>}
-                  </div>
-                  <div className="shot-list-info">
-                    <div className="shot-list-name">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</div>
-                    {u.username && <div className="shot-list-artist">{u.username}</div>}
-                  </div>
-                </div>
-              );
-            });
-          })()}
+          {isAssignee && members.map(u => (
+            <div key={u.id} className="shot-list-item" onClick={() => toggleAssignee(u)} style={assignedIds.has(u.id) ? { background: 'rgba(76,175,80,.1)' } : {}}>
+              <div className={`select-circle ${assignedIds.has(u.id) ? "checked" : ""}`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
+                {assignedIds.has(u.id) && <span style={{ fontSize: 12, color: "#fff" }}>&#10003;</span>}
+              </div>
+              <div className="shot-list-info">
+                <div className="shot-list-name">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</div>
+                {u.username && <div className="shot-list-artist">{u.username}</div>}
+              </div>
+            </div>
+          ))}
           {!isAssignee && statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={() => {
               if (isFilter) {
@@ -1269,6 +1279,16 @@ function ShotsTab() {
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />
             </div>
+            {shot.tasks && shot.tasks.length > 0 && (
+              <div className="shot-list-tasks">
+                {shot.tasks.map(t => (
+                  <div key={t.id} className="shot-task-row">
+                    <span className="shot-task-name">{t.type || t.name}</span>
+                    <StatusPill status={t.status} small />
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>

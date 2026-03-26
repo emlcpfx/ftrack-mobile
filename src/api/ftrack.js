@@ -105,7 +105,7 @@ export async function fetchProjectTasks(projectId) {
         color: task.status?.color || '',
       },
       assignee: assignees.join(', '),
-      assigneeId: (task.assignments || [])[0]?.resource?.id || null,
+      assigneeIds: (task.assignments || []).map(a => a.resource?.id).filter(Boolean),
     });
   }
   return byShot;
