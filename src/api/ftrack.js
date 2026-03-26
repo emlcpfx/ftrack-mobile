@@ -3,18 +3,6 @@ import { Session } from '@ftrack/api';
 let _session = null;
 let _userId = null;
 
-export async function loginWithPassword({ serverUrl, username, password }) {
-  const res = await fetch('/api/auth', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ serverUrl, username, password }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Invalid username or password');
-  if (!data.api_key) throw new Error('Login failed — no API key returned');
-  return { apiUser: data.username || username, apiKey: data.api_key };
-}
-
 export async function createSession({ serverUrl, apiUser, apiKey }) {
   const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
   _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
@@ -98,6 +86,56 @@ export async function fetchStatuses() {
   return result.data;
 }
 
+export async function fetchShotStatuses(projectId) {
+  const s = getSession();
+  const result = await s.query(
+    `select status.id, status.name, status.color
+     from SchemaStatus
+     where schema.object_type.name is "Shot"
+     and schema.project_schema.project_id is "${projectId}"`
+  );
+  // Extract the nested status objects and deduplicate
+  const seen = new Set();
+  return result.data
+    .map(ss => ss.status)
+    .filter(st => st && !seen.has(st.id) && seen.add(st.id));
+}
+
+// ── Users & Assignments ──────────────────────────────────────────────────────
+
+export async function fetchProjectMembers(projectId) {
+  const s = getSession();
+  const result = await s.query(
+    `select resource.id, resource.first_name, resource.last_name, resource.username
+     from Appointment
+     where context_id is "${projectId}"`
+  );
+  const seen = new Set();
+  return result.data
+    .map(a => a.resource)
+    .filter(u => u && !seen.has(u.id) && seen.add(u.id));
+}
+
+export async function assignUserToShot(shotId, userId) {
+  const s = getSession();
+  // Check if assignment already exists
+  const existing = await s.query(
+    `select id from Appointment
+     where context_id is "${shotId}"
+     and resource_id is "${userId}"`
+  );
+  if (existing.data.length > 0) return existing.data[0];
+  return s.create('Appointment', {
+    context_id: shotId,
+    resource_id: userId,
+    type: 'assignment',
+  });
+}
+
+export async function bulkAssignUser(shotIds, userId) {
+  return Promise.all(shotIds.map(id => assignUserToShot(id, userId)));
+}
+
 // ── Versions & Components ─────────────────────────────────────────────────────
 
 export async function fetchShotVersions(shotId) {
@@ -138,21 +176,25 @@ export async function updateVersionStatus(versionId, statusId) {
   return getSession().update('AssetVersion', [versionId], { status_id: statusId });
 }
 
-export async function createNote(parentId, parentType, text, annotationBlob) {
+export async function createNote(parentId, parentType, text, { frameNumber, annotationBlob, categoryId } = {}) {
   const s = getSession();
   const noteData = {
     content: text,
     parent_id: parentId,
     parent_type: parentType,
+    is_todo: true,
   };
   if (_userId) noteData.user_id = _userId;
+  if (frameNumber != null) noteData.frame_number = frameNumber;
+  if (categoryId) noteData.category_id = categoryId;
   const result = await s.create('Note', noteData);
   const noteId = result?.data?.id;
 
   // If there's an annotation image, upload it and attach to the note
   if (annotationBlob && noteId) {
     try {
-      const file = new File([annotationBlob], 'annotation.png', { type: 'image/png' });
+      const fileName = `Annotated frame ${frameNumber ?? 0}.jpg`;
+      const file = new File([annotationBlob], fileName, { type: 'image/jpeg' });
       const [componentResult] = await s.createComponent(file);
       if (componentResult?.data?.id) {
         await s.create('NoteComponent', {
@@ -168,16 +210,29 @@ export async function createNote(parentId, parentType, text, annotationBlob) {
   return result;
 }
 
+export async function fetchNoteCategories() {
+  const s = getSession();
+  const result = await s.query('select id, name from NoteCategory');
+  return result.data;
+}
+
 export async function fetchNotes(parentId) {
   const s = getSession();
   const result = await s.query(
-    `select id, content, date,
-            author.first_name, author.last_name
+    `select id, content, date, frame_number,
+            author.first_name, author.last_name,
+            note_components.component_id,
+            note_components.url,
+            note_components.thumbnail_url
      from Note
      where parent_id is "${parentId}"
      order by date ascending`
   );
   return result.data;
+}
+
+export async function deleteNote(noteId) {
+  return getSession().delete('Note', [noteId]);
 }
 
 // ── Media ─────────────────────────────────────────────────────────────────────
@@ -195,4 +250,11 @@ export function getComponentUrl(componentId) {
   if (!componentId) return null;
   const s = getSession();
   return s.getComponentUrl(componentId);
+}
+
+/** Returns a same-origin proxied URL for a component (avoids CORS for video) */
+export function getProxiedComponentUrl(componentId) {
+  const directUrl = getComponentUrl(componentId);
+  if (!directUrl) return null;
+  return `/api/proxy?url=${encodeURIComponent(directUrl)}`;
 }

@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  createSession, loginWithPassword,
+  createSession,
   fetchReviews, fetchReviewShots,
-  fetchProjects, fetchShots, fetchStatuses, fetchShotVersions,
+  fetchProjects, fetchShots, fetchStatuses, fetchShotStatuses, fetchShotVersions,
+  fetchProjectMembers, bulkAssignUser,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
@@ -60,14 +61,12 @@ const css = `
   .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
   .brand-logo { display:flex; align-items:center; gap:12px; }
   .brand-logo img { filter: brightness(0) invert(1); }
-  .brand-logo .brand-divider { width:1px; background:var(--border); }
-  .brand-logo .brand-vfxtools { font-family:'VT323', monospace; font-weight:400; color:#fff; letter-spacing:-0.01em; line-height:1; text-decoration:none; border:1px solid rgba(255,255,255,0.3); border-radius:4px; padding:4px 8px; }
-  .brand-logo--lg img { height:28px; }
-  .brand-logo--lg .brand-divider { height:24px; }
-  .brand-logo--lg .brand-vfxtools { font-size:1.85rem; }
-  .brand-logo--sm img { height:22px; }
-  .brand-logo--sm .brand-divider { height:20px; }
-  .brand-logo--sm .brand-vfxtools { font-size:1.5rem; }
+  .brand-logo .brand-divider { width:1px; align-self:stretch; background:var(--border); }
+  .brand-logo .brand-vfxtools { font-family:'VT323', monospace; font-weight:400; color:#fff; letter-spacing:-0.01em; line-height:1; text-decoration:none; border:1px solid rgba(255,255,255,0.3); border-radius:4px; display:flex; align-items:center; box-sizing:border-box; }
+  .brand-logo--lg img { height:32px; }
+  .brand-logo--lg .brand-vfxtools { font-size:1.55rem; padding:5px 10px; height:32px; }
+  .brand-logo--sm img { height:26px; }
+  .brand-logo--sm .brand-vfxtools { font-size:1.25rem; padding:4px 8px; height:26px; }
   .login-brand { margin-bottom:8px; }
   .login-form { width:100%; display:flex; flex-direction:column; gap:14px; }
   .api-key-link { display:block; font-size:12px; color:var(--accent); text-decoration:none; margin-top:6px; }
@@ -837,6 +836,7 @@ function ShotsTab() {
   const [versions, setVersions] = useState([]);
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [player, setPlayer] = useState(null);
+  const [members, setMembers] = useState([]);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -855,18 +855,36 @@ function ShotsTab() {
 
     fetchStatuses()
       .then(stats => {
-        console.log('[ShotsTab] Loaded', stats.length, 'statuses');
         setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
       })
       .catch(err => console.error('[ShotsTab] Statuses error:', err))
       .finally(checkDone);
   }, []);
 
-  // Load shots when project changes
+  // Load shots, shot-specific statuses, and project members when project changes
   useEffect(() => {
     if (!selectedProjectId) return;
     setShotsLoading(true);
     setError("");
+
+    // Fetch shot-valid statuses for this project (overrides generic ones)
+    fetchShotStatuses(selectedProjectId)
+      .then(stats => {
+        if (stats.length > 0) {
+          console.log('[ShotsTab] Loaded', stats.length, 'shot-specific statuses');
+          setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
+        }
+      })
+      .catch(err => console.warn('[ShotsTab] Shot statuses fallback:', err));
+
+    // Fetch project members for assignee picker
+    fetchProjectMembers(selectedProjectId)
+      .then(users => {
+        console.log('[ShotsTab] Loaded', users.length, 'project members');
+        setMembers(users);
+      })
+      .catch(err => console.warn('[ShotsTab] Members error:', err));
+
     fetchShots(selectedProjectId)
       .then(data => {
         setShots(data.map(s => ({
@@ -971,6 +989,19 @@ function ShotsTab() {
     setStatusModal(null);
   };
 
+  const applyAssignee = async (user) => {
+    try {
+      await bulkAssignUser([...selected], user.id);
+      const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
+      showToast(`${selected.size} shots \u2192 ${name}`);
+      setSelected(new Set());
+      setMultiSelect(false);
+    } catch (err) {
+      showToast("Assign failed");
+    }
+    setStatusModal(null);
+  };
+
   const selectAll = () => setSelected(new Set(filtered.map(s => s.id)));
   const clearAll = () => { setSelected(new Set()); setMultiSelect(false); };
 
@@ -984,13 +1015,16 @@ function ShotsTab() {
   // ── Player view ──
   if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
 
-  // ── Status picker view (full screen, no modal) ──
-  console.log('[ShotsTab] render — statusModal:', statusModal, 'statuses:', statuses.length, 'selected:', selected.size);
-  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "filter") {
+  // ── Picker views (full screen) ──
+  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "filter" || statusModal === "assignee") {
     const isFilter = statusModal === "filter";
+    const isAssignee = statusModal === "assignee";
     const title = isFilter ? "Filter by Status"
+      : isAssignee ? `Assign ${selected.size} shots`
       : statusModal === "bulk" ? `Set status for ${selected.size} shots`
       : "Change Status";
+
+    const items = isAssignee ? members : statuses;
 
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
@@ -1005,7 +1039,18 @@ function ShotsTab() {
               {!statusFilter && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           )}
-          {statuses.map(s => (
+          {isAssignee && members.map(u => (
+            <div key={u.id} className="shot-list-item" onClick={() => applyAssignee(u)}>
+              <div className="avatar" style={{ width: 28, height: 28, fontSize: 12, flexShrink: 0 }}>
+                {(u.first_name?.[0] || u.username?.[0] || '?').toUpperCase()}
+              </div>
+              <div className="shot-list-info">
+                <div className="shot-list-name">{[u.first_name, u.last_name].filter(Boolean).join(' ') || u.username}</div>
+                {u.username && <div className="shot-list-artist">{u.username}</div>}
+              </div>
+            </div>
+          ))}
+          {!isAssignee && statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={() => {
               if (isFilter) {
                 setStatusFilter(s.name);
@@ -1020,9 +1065,9 @@ function ShotsTab() {
               {statusModal === "shot-status" && detailShot?.status?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           ))}
-          {statuses.length === 0 && (
+          {items.length === 0 && (
             <div className="empty">
-              <div className="empty-text">No statuses available.</div>
+              <div className="empty-text">{isAssignee ? "No project members found." : "No statuses available."}</div>
             </div>
           )}
         </div>
@@ -1093,7 +1138,8 @@ function ShotsTab() {
             <div className="header-right" style={{ gap: 8 }}>
               <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={selectAll}>All</button>
               {selected.size > 0 && (
-                <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Set Status</button>
+                <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Status</button>
+                <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("assignee")}>Assign</button>
               )}
             </div>
           </>
