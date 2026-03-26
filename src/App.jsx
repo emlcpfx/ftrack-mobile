@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   createSession,
   fetchReviews, fetchReviewShots,
-  fetchProjects, fetchShots, fetchStatuses, fetchShotStatuses, fetchShotVersions,
+  fetchProjects, fetchShots, fetchShotAssignees, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchProjectMembers, assignUserToShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
@@ -885,8 +885,8 @@ function ShotsTab() {
       })
       .catch(err => console.warn('[ShotsTab] Members error:', err));
 
-    fetchShots(selectedProjectId)
-      .then(data => {
+    Promise.all([fetchShots(selectedProjectId), fetchShotAssignees(selectedProjectId).catch(() => ({}))])
+      .then(([data, assignees]) => {
         setShots(data.map(s => ({
           id: s.id,
           name: s.name,
@@ -896,6 +896,7 @@ function ShotsTab() {
             color: normalizeColor(s.status?.color),
           },
           thumb: getThumbnailUrl(s.thumbnail_id),
+          artist: assignees[s.id] || '',
         })));
       })
       .catch(err => setError(err.message))
@@ -1207,6 +1208,7 @@ function ShotsTab() {
             }
             <div className="shot-list-info">
               <div className="shot-list-name">{shot.name}</div>
+              {shot.artist && <div className="shot-list-artist">{shot.artist}</div>}
             </div>
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />

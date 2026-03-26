@@ -77,6 +77,34 @@ export async function fetchShots(projectId) {
   return result.data;
 }
 
+export async function fetchShotAssignees(projectId) {
+  const s = getSession();
+  const result = await s.query(
+    `select parent_id, assignments.resource.first_name, assignments.resource.last_name
+     from Task
+     where project.id is "${projectId}"`
+  );
+  // Group assignee names by shot (parent_id)
+  const byShot = {};
+  for (const task of result.data) {
+    const shotId = task.parent_id;
+    if (!shotId || !task.assignments) continue;
+    for (const appt of task.assignments) {
+      const name = appt.resource?.first_name || '';
+      if (name) {
+        if (!byShot[shotId]) byShot[shotId] = new Set();
+        byShot[shotId].add(name);
+      }
+    }
+  }
+  // Convert sets to comma-joined strings
+  const out = {};
+  for (const [id, names] of Object.entries(byShot)) {
+    out[id] = [...names].join(', ');
+  }
+  return out;
+}
+
 export async function fetchStatuses() {
   const s = getSession();
   const result = await s.query(
