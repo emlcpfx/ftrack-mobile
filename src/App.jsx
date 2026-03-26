@@ -350,13 +350,13 @@ function PlayerScreen({ shot, onClose }) {
   const [notesLoading, setNotesLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
   const [approval, setApproval] = useState(null);
+  const [statusPicker, setStatusPicker] = useState(false);
+  const [currentStatus, setCurrentStatus] = useState(shot.status);
   const [toast, setToast] = useState("");
   const [videoUrl, setVideoUrl] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [fps, setFps] = useState(24);
-  const [statusPicker, setStatusPicker] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState(shot.status);
   const lastPos = useRef(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
@@ -538,37 +538,7 @@ function PlayerScreen({ shot, onClose }) {
     }
   };
 
-  const handleApproval = async (type) => {
-    const newApproval = approval === type ? null : type;
-    setApproval(newApproval);
-
-    if (!shot.versionId || !newApproval) {
-      showToast(type === "approve" ? "Approved" : "Changes requested");
-      return;
-    }
-
-    // Find matching status by name
-    const targetName = type === "approve" ? "approved" : null;
-    const rejectNames = ["changes needed", "requires changes", "revise", "not approved", "changes requested"];
-    const matched = type === "approve"
-      ? statuses.find(s => s.name.toLowerCase() === targetName)
-      : statuses.find(s => rejectNames.includes(s.name.toLowerCase()));
-
-    if (matched) {
-      try {
-        if (shot.taskId) {
-          await updateTaskStatus(shot.taskId, matched.id);
-        } else {
-          await updateVersionStatus(shot.versionId, matched.id);
-        }
-        showToast(type === "approve" ? "Approved" : "Changes requested");
-      } catch {
-        showToast("Status update failed");
-      }
-    } else {
-      showToast(type === "approve" ? "Approved (local)" : "Changes requested (local)");
-    }
-  };
+  // handleApproval removed — replaced by status picker
 
   if (statusPicker) {
     return (
@@ -581,7 +551,11 @@ function PlayerScreen({ shot, onClose }) {
           {statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={async () => {
               try {
-                await updateVersionStatus(shot.versionId, s.id);
+                if (shot.taskId) {
+                  await updateTaskStatus(shot.taskId, s.id);
+                } else {
+                  await updateVersionStatus(shot.versionId, s.id);
+                }
                 setCurrentStatus({ id: s.id, name: s.name, color: normalizeColor(s.color) });
                 showToast(`Status \u2192 ${s.name}`);
               } catch {
@@ -656,12 +630,15 @@ function PlayerScreen({ shot, onClose }) {
       )}
 
       <div className="player-body">
-        {/* Approval */}
-        <div className="approval-row" style={{ paddingTop: 14 }}>
-          <button className={`approve-btn approve ${approval === "approve" ? "active" : ""}`}
-            onClick={() => handleApproval("approve")}>&#10003; Approve</button>
-          <button className={`approve-btn reject ${approval === "reject" ? "active" : ""}`}
-            onClick={() => handleApproval("reject")}>&#10005; Changes</button>
+        {/* Status */}
+        <div style={{ padding: '14px 16px 0', display: 'flex', gap: 8 }}>
+          <div style={{ flex: 1 }}>
+            <StatusPill status={currentStatus} />
+          </div>
+          {shot.taskId && (
+            <button className="action-btn" style={{ flex: 0, whiteSpace: 'nowrap', padding: '8px 16px' }}
+              onClick={() => setStatusPicker(true)}>Change Status</button>
+          )}
         </div>
 
         {/* Notes */}
