@@ -14,7 +14,7 @@ A lightweight replacement for ftrack's broken mobile UI. Two tabs:
 - React 18 + Vite
 - `@ftrack/api` JS SDK for all data
 - No UI library — custom CSS with CSS variables (all in App.jsx `css` string)
-- Fonts: Syne (headings) + DM Mono (body) via Google Fonts
+- Font: Inter via Google Fonts (matches ftrack's Proxima Nova aesthetic)
 
 ## File structure
 
@@ -124,20 +124,21 @@ Suggested component breakdown:
 
 ## Design system (CSS variables)
 
+Based on ftrack's actual brand aesthetic. Uses Inter (closest free alternative to ftrack's Proxima Nova).
+
 ```
---bg: #080810
---surface: #0f0f1a
---card: #15151f
---card2: #1c1c2a
---border: #252535
---accent: #7c6aff      ← primary purple
---accent2: #ff6a9b     ← pink highlight
---green: #1fdf7a
---red: #ff4d6a
---amber: #ffb830
---blue: #3b9eff
---text: #ddddf0
---muted: #5a5a7a
---font-head: 'Syne'
---font-mono: 'DM Mono'
+--bg: #1a1d21           ← main background (dark neutral gray)
+--surface: #22262b      ← elevated surface / header / nav
+--card: #282d33         ← card background
+--card2: #2f353c        ← secondary card / placeholder
+--border: #3a4049       ← borders (subtle)
+--accent: #0097CE       ← ftrack brand teal/cyan
+--accent2: #00B4D8      ← lighter teal
+--green: #4CAF50        ← approved
+--red: #E74C3C          ← rejected / changes needed
+--amber: #F5A623        ← pending review
+--blue: #2196F3         ← in progress
+--text: #E8EAED         ← primary text
+--muted: #8B9298        ← secondary text
+--font-body: 'Inter'    ← primary font (all UI)
 ```
