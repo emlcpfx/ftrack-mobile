@@ -85,8 +85,7 @@ export async function fetchStatuses() {
   const s = getSession();
   const result = await s.query(
     `select id, name, color
-     from Status
-     order by sort ascending`
+     from Status`
   );
   return result.data;
 }
@@ -150,13 +149,8 @@ export function getThumbnailUrl(thumbnailId, size = 160) {
   return `${s.serverUrl}/component/thumbnail?id=${thumbnailId}&size=${size}`;
 }
 
-export async function getComponentUrl(componentId) {
+export function getComponentUrl(componentId) {
   if (!componentId) return null;
   const s = getSession();
-  try {
-    const urls = await s.getComponentUrls([componentId]);
-    return urls[componentId] || null;
-  } catch {
-    return `${s.serverUrl}/component/get?id=${componentId}`;
-  }
+  return s.getComponentUrl(componentId);
 }

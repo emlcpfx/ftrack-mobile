@@ -336,17 +336,14 @@ function PlayerScreen({ shot, onClose }) {
   useEffect(() => {
     if (!shot.versionId) return;
     fetchVersionComponents(shot.versionId)
-      .then(async (components) => {
-        console.log('[Player] Components for version', shot.versionId, components);
-        const reviewable = components.find(c =>
-          c.name?.includes('ftrackreview') ||
-          c.file_type === '.mp4' ||
-          c.file_type === '.mov' ||
-          c.file_type === '.webm'
-        );
+      .then((components) => {
+        // Prefer the transcoded review MP4, then any video file
+        const reviewable =
+          components.find(c => c.name === 'ftrackreview-mp4') ||
+          components.find(c => c.file_type === '.mp4') ||
+          components.find(c => c.file_type === '.mov' || c.file_type === '.webm');
         if (reviewable) {
-          const url = await getComponentUrl(reviewable.id);
-          console.log('[Player] Video URL:', url);
+          const url = getComponentUrl(reviewable.id);
           if (url) setVideoUrl(url);
         }
       })
@@ -703,11 +700,12 @@ function ShotsTab() {
   useEffect(() => {
     Promise.all([fetchProjects(), fetchStatuses()])
       .then(([projs, stats]) => {
+        console.log('[ShotsTab] Projects:', projs.length, 'Statuses:', stats.length);
         setProjects(projs);
         setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
         if (projs.length > 0) setSelectedProjectId(projs[0].id);
       })
-      .catch(err => setError(err.message))
+      .catch(err => { console.error('[ShotsTab] Init error:', err); setError(err.message); })
       .finally(() => setLoading(false));
   }, []);
 
