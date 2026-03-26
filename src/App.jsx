@@ -337,6 +337,7 @@ function PlayerScreen({ shot, onClose }) {
     if (!shot.versionId) return;
     fetchVersionComponents(shot.versionId)
       .then(async (components) => {
+        console.log('[Player] Components for version', shot.versionId, components);
         const reviewable = components.find(c =>
           c.name?.includes('ftrackreview') ||
           c.file_type === '.mp4' ||
@@ -345,10 +346,11 @@ function PlayerScreen({ shot, onClose }) {
         );
         if (reviewable) {
           const url = await getComponentUrl(reviewable.id);
+          console.log('[Player] Video URL:', url);
           if (url) setVideoUrl(url);
         }
       })
-      .catch(() => {});
+      .catch(err => console.error('[Player] Component fetch error:', err));
   }, [shot.versionId]);
 
   // Fetch statuses for approval buttons
@@ -553,7 +555,19 @@ function ReviewsTab({ userInitial }) {
       .finally(() => setLoading(false));
   }, []);
 
+  // Browser back button support
+  useEffect(() => {
+    const onPopState = (e) => {
+      const view = e.state?.view;
+      if (player) { setPlayer(null); }
+      else if (detail) { setDetail(null); setDetailShots([]); }
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  });
+
   const openDetail = async (review) => {
+    history.pushState({ view: "detail" }, "");
     setDetail(review);
     setDetailLoading(true);
     setError("");
@@ -561,16 +575,16 @@ function ReviewsTab({ userInitial }) {
       const rsos = await fetchReviewShots(review.id);
       setDetailShots(rsos.map(rso => ({
         id: rso.id,
-        name: rso.version?.asset?.parent?.name || rso.name || 'Unknown',
+        name: rso.asset_version?.asset?.parent?.name || rso.name || 'Unknown',
         status: {
-          name: rso.version?.status?.name || 'Unknown',
-          color: normalizeColor(rso.version?.status?.color),
+          name: rso.asset_version?.status?.name || 'Unknown',
+          color: normalizeColor(rso.asset_version?.status?.color),
         },
-        artist: rso.version?.user?.first_name || '',
-        thumb: getThumbnailUrl(rso.version?.thumbnail_id),
-        hasVersion: !!rso.version,
-        versionNum: rso.version?.version || 0,
-        versionId: rso.version?.id,
+        artist: rso.asset_version?.user?.first_name || '',
+        thumb: getThumbnailUrl(rso.asset_version?.thumbnail_id),
+        hasVersion: !!rso.asset_version,
+        versionNum: rso.asset_version?.version || 0,
+        versionId: rso.asset_version?.id,
       })));
     } catch (err) {
       setError(err.message);
@@ -579,12 +593,28 @@ function ReviewsTab({ userInitial }) {
     }
   };
 
-  if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
+  const openPlayer = (shot) => {
+    history.pushState({ view: "player" }, "");
+    setPlayer(shot);
+  };
+
+  const closePlayer = () => {
+    setPlayer(null);
+    history.back();
+  };
+
+  const closeDetail = () => {
+    setDetail(null);
+    setDetailShots([]);
+    history.back();
+  };
+
+  if (player) return <PlayerScreen shot={player} onClose={closePlayer} />;
 
   if (detail) return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div className="header">
-        <div className="back-btn" onClick={() => { setDetail(null); setDetailShots([]); }}>&#8592; Reviews</div>
+        <div className="back-btn" onClick={closeDetail}>&#8592; Reviews</div>
         <div className="header-title" style={{ fontSize: 15 }}>{detail.name}</div>
       </div>
       <div className="scroll">
@@ -596,7 +626,7 @@ function ReviewsTab({ userInitial }) {
           <>
             <div className="section-label">{detailShots.length} shots</div>
             {detailShots.map(shot => (
-              <div key={shot.id} className="shot-row" onClick={() => setPlayer(shot)}>
+              <div key={shot.id} className="shot-row" onClick={() => openPlayer(shot)}>
                 <div className="shot-row-inner">
                   <div className="shot-thumb-sm">
                     {shot.thumb

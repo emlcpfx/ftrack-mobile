@@ -42,12 +42,12 @@ export async function fetchReviews() {
 export async function fetchReviewShots(reviewSessionId) {
   const s = getSession();
   const result = await s.query(
-    `select id, name, sort,
-            version.id, version.version,
-            version.asset.parent.name,
-            version.thumbnail_id,
-            version.status.name, version.status.color,
-            version.user.first_name
+    `select id, name, sort_order,
+            asset_version.id, asset_version.version,
+            asset_version.asset.parent.name,
+            asset_version.thumbnail_id,
+            asset_version.status.name, asset_version.status.color,
+            asset_version.user.first_name
      from ReviewSessionObject
      where review_session_id is "${reviewSessionId}"`
   );
@@ -98,7 +98,7 @@ export async function fetchVersionComponents(versionId) {
   const result = await s.query(
     `select id, name, file_type
      from Component
-     where version_id is "${versionId}"`
+     where version.id is "${versionId}"`
   );
   return result.data;
 }
