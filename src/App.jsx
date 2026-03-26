@@ -3,7 +3,7 @@ import {
   createSession,
   fetchReviews, fetchReviewShots,
   fetchProjects, fetchShots, fetchStatuses, fetchShotStatuses, fetchShotVersions,
-  fetchProjectMembers, bulkAssignUser,
+  fetchProjectMembers, assignUserToShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
@@ -12,7 +12,7 @@ import {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
-  if (!c) return '#6b6b8a';
+  if (!c) return '#6b7280';
   if (c.startsWith('#')) return c;
   if (/^[0-9a-fA-F]{3,8}$/.test(c)) return '#' + c;
   return c;
@@ -37,19 +37,19 @@ const css = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
   :root {
-    --bg: #1e1a2a;
-    --surface: #262235;
-    --card: #2e2a3e;
-    --card2: #353148;
-    --border: #3d3855;
+    --bg: #1a1d21;
+    --surface: #222628;
+    --card: #2a2e32;
+    --card2: #32373c;
+    --border: #3a3f44;
     --accent: #c77dba;
     --accent2: #d4a0c8;
     --green: #4CAF50;
     --red: #E74C3C;
     --amber: #F5A623;
-    --blue: #7c6dd8;
-    --text: #e8e6ef;
-    --muted: #8a8599;
+    --blue: #2196F3;
+    --text: #e8eaed;
+    --muted: #8b9298;
     --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
 
@@ -58,7 +58,7 @@ const css = `
   .app { display: flex; flex-direction: column; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 
   /* ── Login ── */
-  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
+  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #1f2225 0%, var(--bg) 60%); }
   .brand-logo { display:flex; align-items:center; gap:12px; }
   .brand-logo img { filter: brightness(0) invert(1); }
   .brand-logo .brand-divider { width:1px; align-self:stretch; background:var(--border); }
@@ -878,7 +878,7 @@ function ShotsTab() {
       .catch(err => console.warn('[ShotsTab] Shot statuses fallback:', err));
 
     // Fetch project members for assignee picker
-    fetchProjectMembers(selectedProjectId)
+    fetchProjectMembers()
       .then(users => {
         console.log('[ShotsTab] Loaded', users.length, 'project members');
         setMembers(users);
@@ -991,7 +991,7 @@ function ShotsTab() {
 
   const applyAssignee = async (user) => {
     try {
-      await bulkAssignUser([...selected], user.id);
+      await assignUserToShots([...selected], user.id);
       const name = [user.first_name, user.last_name].filter(Boolean).join(' ');
       showToast(`${selected.size} shots \u2192 ${name}`);
       setSelected(new Set());

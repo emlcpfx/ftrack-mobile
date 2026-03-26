@@ -88,52 +88,76 @@ export async function fetchStatuses() {
 
 export async function fetchShotStatuses(projectId) {
   const s = getSession();
-  const result = await s.query(
-    `select status.id, status.name, status.color
-     from SchemaStatus
-     where schema.object_type.name is "Shot"
-     and schema.project_schema.project_id is "${projectId}"`
+  // 1. Get the project's schema ID
+  const proj = await s.query(
+    `select project_schema.id from Project where id is "${projectId}"`
   );
-  // Extract the nested status objects and deduplicate
-  const seen = new Set();
-  return result.data
-    .map(ss => ss.status)
-    .filter(st => st && !seen.has(st.id) && seen.add(st.id));
+  const psId = proj.data[0]?.project_schema?.id;
+  if (!psId) return [];
+
+  // 2. Get the Shot ObjectType ID
+  const ot = await s.query('select id from ObjectType where name is "Shot"');
+  const shotTypeId = ot.data[0]?.id;
+  if (!shotTypeId) return [];
+
+  // 3. Find the Shot schema under this project schema
+  const schemas = await s.query(
+    `select id, object_type_id from Schema where project_schema_id is "${psId}"`
+  );
+  const shotSchema = schemas.data.find(sc => sc.object_type_id === shotTypeId);
+  if (!shotSchema) return [];
+
+  // 4. Get valid status IDs from SchemaStatus
+  const ss = await s.query(
+    `select status_id from SchemaStatus where schema_id is "${shotSchema.id}"`
+  );
+  const statusIds = ss.data.map(x => x.status_id).filter(Boolean);
+  if (statusIds.length === 0) return [];
+
+  // 5. Fetch the actual Status entities
+  const statuses = await s.query(
+    `select id, name, color from Status where id in (${statusIds.map(id => `"${id}"`).join(',')})`
+  );
+  return statuses.data;
 }
 
 // ── Users & Assignments ──────────────────────────────────────────────────────
 
-export async function fetchProjectMembers(projectId) {
+export async function fetchProjectMembers() {
   const s = getSession();
   const result = await s.query(
-    `select resource.id, resource.first_name, resource.last_name, resource.username
-     from Appointment
-     where context_id is "${projectId}"`
+    `select id, first_name, last_name, username
+     from User where is_active is true`
   );
-  const seen = new Set();
-  return result.data
-    .map(a => a.resource)
-    .filter(u => u && !seen.has(u.id) && seen.add(u.id));
+  // Filter out service accounts
+  return result.data.filter(u =>
+    u.username && !u.username.startsWith('__')
+  );
 }
 
-export async function assignUserToShot(shotId, userId) {
+export async function assignUserToShots(shotIds, userId) {
   const s = getSession();
-  // Check if assignment already exists
-  const existing = await s.query(
-    `select id from Appointment
-     where context_id is "${shotId}"
-     and resource_id is "${userId}"`
+  // Assignments go on Tasks under shots, not shots directly.
+  // Find all tasks under the given shots.
+  const tasks = await s.query(
+    `select id, parent_id from Task where parent_id in (${shotIds.map(id => `"${id}"`).join(',')})`
   );
-  if (existing.data.length > 0) return existing.data[0];
-  return s.create('Appointment', {
-    context_id: shotId,
-    resource_id: userId,
-    type: 'assignment',
-  });
-}
-
-export async function bulkAssignUser(shotIds, userId) {
-  return Promise.all(shotIds.map(id => assignUserToShot(id, userId)));
+  const results = [];
+  for (const task of tasks.data) {
+    // Check existing
+    const existing = await s.query(
+      `select id from Appointment where context_id is "${task.id}" and resource_id is "${userId}"`
+    );
+    if (existing.data.length === 0) {
+      const r = await s.create('Appointment', {
+        context_id: task.id,
+        resource_id: userId,
+        type: 'assignment',
+      });
+      results.push(r);
+    }
+  }
+  return results;
 }
 
 // ── Versions & Components ─────────────────────────────────────────────────────
