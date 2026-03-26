@@ -142,7 +142,10 @@ const css = `
   .notes-section { padding:16px; }
   .notes-title { font-size:11px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--muted); margin-bottom:10px; }
   .note-item { background:var(--card); border-radius:8px; padding:10px 12px; margin-bottom:8px; }
+  .note-clickable { cursor:pointer; transition:background .15s; }
+  .note-clickable:active { background:var(--card2); }
   .note-author { font-size:11px; font-weight:600; color:var(--accent); margin-bottom:4px; }
+  .note-frame { font-size:10px; font-family:monospace; color:var(--accent2); background:rgba(0,151,206,0.12); padding:2px 6px; border-radius:4px; }
   .note-text { font-size:13px; line-height:1.5; }
   .note-time { font-size:11px; color:var(--muted); margin-top:4px; }
   .note-input-row { display:flex; gap:8px; align-items:flex-end; margin-top:8px; }
@@ -319,6 +322,7 @@ function LoginScreen({ onLogin }) {
 // ─── Player Screen ────────────────────────────────────────────────────────────
 function PlayerScreen({ shot, onClose }) {
   const canvasRef = useRef(null);
+  const videoRef = useRef(null);
   const [drawing, setDrawing] = useState(false);
   const [drawMode, setDrawMode] = useState(false);
   const [color, setColor] = useState("#ff4d6a");
@@ -330,9 +334,32 @@ function PlayerScreen({ shot, onClose }) {
   const [toast, setToast] = useState("");
   const [videoUrl, setVideoUrl] = useState(null);
   const [statuses, setStatuses] = useState([]);
+  const [fps, setFps] = useState(24);
   const lastPos = useRef(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const getCurrentFrame = () => {
+    const vid = videoRef.current;
+    if (!vid || !vid.duration) return null;
+    return Math.round(vid.currentTime * fps);
+  };
+
+  const formatFrameAsTimecode = (frame) => {
+    if (frame == null) return '';
+    const totalSeconds = frame / fps;
+    const m = Math.floor(totalSeconds / 60);
+    const s = Math.floor(totalSeconds % 60);
+    const f = frame % fps;
+    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+  };
+
+  const seekToFrame = (frame) => {
+    const vid = videoRef.current;
+    if (!vid || frame == null) return;
+    vid.currentTime = frame / fps;
+    vid.pause();
+  };
 
   // Fetch notes for this version
   useEffect(() => {
@@ -343,6 +370,8 @@ function PlayerScreen({ shot, onClose }) {
           author: [n.author?.first_name, n.author?.last_name].filter(Boolean).join(' ') || 'Unknown',
           text: n.content,
           time: formatTime(n.date),
+          frame: n.frame_number,
+          hasAttachment: n.note_components?.length > 0,
         })));
       })
       .catch(() => {})
@@ -415,26 +444,38 @@ function PlayerScreen({ shot, onClose }) {
     showToast("Annotation cleared");
   };
 
+  const hasCanvasDrawing = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return false;
+    const pixels = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    return pixels.some((v, i) => i % 4 === 3 && v > 0);
+  };
+
   const sendNote = async () => {
-    if (!noteText.trim()) return;
+    if (!noteText.trim() && !hasCanvasDrawing()) return;
+    if (!noteText.trim() && hasCanvasDrawing()) {
+      showToast("Add a note to go with the annotation");
+      return;
+    }
     if (!shot.versionId) {
       showToast("No version to attach note to");
       return;
     }
     try {
-      // Check if canvas has any annotation drawn on it
+      const frame = getCurrentFrame();
       let annotationBlob = null;
       const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-        const hasDrawing = pixels.some((v, i) => i % 4 === 3 && v > 0); // any non-transparent pixel
-        if (hasDrawing) {
-          annotationBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-        }
+      if (canvas && hasCanvasDrawing()) {
+        annotationBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
       }
-      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), annotationBlob);
-      setNotes(n => [...n, { author: "You", text: noteText.trim(), time: "Just now" }]);
+      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), { frameNumber: frame, annotationBlob });
+      setNotes(n => [...n, {
+        author: "You",
+        text: noteText.trim(),
+        time: "Just now",
+        frame,
+        hasAttachment: !!annotationBlob,
+      }]);
       setNoteText("");
       if (annotationBlob) {
         canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
@@ -489,7 +530,7 @@ function PlayerScreen({ shot, onClose }) {
       {/* Video / Canvas area */}
       <div className="video-area">
         {videoUrl ? (
-          <video src={videoUrl} controls playsInline preload="metadata" />
+          <video ref={videoRef} src={videoUrl} controls playsInline preload="metadata" />
         ) : (
           <div className="video-placeholder">
             <div className="play-icon">&#9654;</div>
@@ -545,8 +586,14 @@ function PlayerScreen({ shot, onClose }) {
             <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>No notes yet.</div>
           )}
           {notes.map((n, i) => (
-            <div key={i} className="note-item">
-              <div className="note-author">{n.author}</div>
+            <div key={i} className={`note-item${n.frame != null ? ' note-clickable' : ''}`}
+              onClick={() => n.frame != null && seekToFrame(n.frame)}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="note-author">{n.author}{n.hasAttachment ? ' \u{1F3A8}' : ''}</div>
+                {n.frame != null && (
+                  <div className="note-frame">{formatFrameAsTimecode(n.frame)}</div>
+                )}
+              </div>
               <div className="note-text">{n.text}</div>
               <div className="note-time">{n.time}</div>
             </div>
@@ -733,16 +780,26 @@ function ShotsTab() {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
-  // Load projects and statuses on mount
+  // Load projects and statuses on mount (separately so one failing doesn't block the other)
   useEffect(() => {
-    Promise.all([fetchProjects(), fetchStatuses()])
-      .then(([projs, stats]) => {
+    let done = 0;
+    const checkDone = () => { if (++done >= 2) setLoading(false); };
+
+    fetchProjects()
+      .then(projs => {
         setProjects(projs);
-        setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
         if (projs.length > 0) setSelectedProjectId(projs[0].id);
       })
-      .catch(err => { console.error('[ShotsTab] Init error:', err); setError(err.message); })
-      .finally(() => setLoading(false));
+      .catch(err => { console.error('[ShotsTab] Projects error:', err); setError(err.message); })
+      .finally(checkDone);
+
+    fetchStatuses()
+      .then(stats => {
+        console.log('[ShotsTab] Loaded', stats.length, 'statuses');
+        setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
+      })
+      .catch(err => console.error('[ShotsTab] Statuses error:', err))
+      .finally(checkDone);
   }, []);
 
   // Load shots when project changes
