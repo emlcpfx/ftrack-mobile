@@ -1137,10 +1137,10 @@ function ShotsTab() {
             </div>
             <div className="header-right" style={{ gap: 8 }}>
               <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={selectAll}>All</button>
-              {selected.size > 0 && (
+              {selected.size > 0 && (<>
                 <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Status</button>
                 <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("assignee")}>Assign</button>
-              )}
+              </>)}
             </div>
           </>
         ) : (
