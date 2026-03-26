@@ -2,13 +2,10 @@ import { Session } from '@ftrack/api';
 
 let _session = null;
 
-export function createSession({ serverUrl, apiUser, apiKey }) {
-  _session = new Session(
-    serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`,
-    apiUser,
-    apiKey,
-    { autoConnectEventHub: false }
-  );
+export async function createSession({ serverUrl, apiUser, apiKey }) {
+  const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
+  _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
+  await _session.initializing;
   return _session;
 }
 
@@ -24,8 +21,8 @@ export async function fetchReviews() {
   const result = await s.query(
     `select id, name, created_at
      from ReviewSession
-     where is_open is true
-     order by created_at descending`
+     order by created_at descending
+     limit 50`
   );
   return result.data;
 }
@@ -33,11 +30,12 @@ export async function fetchReviews() {
 export async function fetchReviewShots(reviewSessionId) {
   const s = getSession();
   const result = await s.query(
-    `select id, name, version.id, version.version,
+    `select id, name, sort,
+            version.id, version.version,
             version.asset.parent.name,
             version.thumbnail_id,
-            version.task.assignments.resource.first_name,
-            version.status.name, version.status.color
+            version.status.name, version.status.color,
+            version.user.first_name
      from ReviewSessionObject
      where review_session_id is "${reviewSessionId}"
      order by sort ascending`
@@ -63,22 +61,33 @@ export async function fetchShots(projectId) {
   const result = await s.query(
     `select id, name,
             status.id, status.name, status.color,
-            assignments.resource.first_name,
-            thumbnail_id,
-            assets.versions_count
+            thumbnail_id
      from Shot
      where project.id is "${projectId}"
-     order by name ascending`
+     order by name ascending
+     limit 200`
   );
   return result.data;
 }
 
-export async function fetchStatuses(objectTypeName = 'Shot') {
+export async function fetchStatuses() {
   const s = getSession();
   const result = await s.query(
     `select id, name, color
      from Status
-     where schema.object_type.name is "${objectTypeName}"`
+     order by sort ascending`
+  );
+  return result.data;
+}
+
+// ── Versions & Components ─────────────────────────────────────────────────────
+
+export async function fetchVersionComponents(versionId) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, name, file_type
+     from Component
+     where version_id is "${versionId}"`
   );
   return result.data;
 }
@@ -123,11 +132,20 @@ export async function fetchNotes(parentId) {
 
 export function getThumbnailUrl(thumbnailId, size = 160) {
   if (!thumbnailId) return null;
-  return getSession().thumbnailUrl(thumbnailId, { size });
+  const s = getSession();
+  if (typeof s.thumbnailUrl === 'function') {
+    return s.thumbnailUrl(thumbnailId, { size });
+  }
+  return `${s.serverUrl}/component/thumbnail?id=${thumbnailId}&size=${size}`;
 }
 
 export async function getComponentUrl(componentId) {
+  if (!componentId) return null;
   const s = getSession();
-  const urls = await s.getComponentUrls([componentId]);
-  return urls[componentId];
+  try {
+    const urls = await s.getComponentUrls([componentId]);
+    return urls[componentId] || null;
+  } catch {
+    return `${s.serverUrl}/component/get?id=${componentId}`;
+  }
 }

@@ -1,59 +1,32 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import {
+  createSession,
+  fetchReviews, fetchReviewShots,
+  fetchProjects, fetchShots, fetchStatuses,
+  updateShotStatus, bulkUpdateStatus, updateVersionStatus,
+  createNote as apiCreateNote, fetchNotes as apiFetchNotes,
+  getThumbnailUrl, getComponentUrl, fetchVersionComponents,
+} from "./api/ftrack";
 
-// ─── Mock Data (replace with real ftrack API calls) ──────────────────────────
-const STATUSES = [
-  { name: "Not Started", color: "#6b6b8a" },
-  { name: "In Progress", color: "#3b82f6" },
-  { name: "Pending Review", color: "#f59e0b" },
-  { name: "Approved", color: "#22c55e" },
-  { name: "Changes Needed", color: "#ef4444" },
-];
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+const normalizeColor = (c) => {
+  if (!c) return '#6b6b8a';
+  if (c.startsWith('#')) return c;
+  if (/^[0-9a-fA-F]{3,8}$/.test(c)) return '#' + c;
+  return c;
+};
 
-const MOCK_SHOTS = Array.from({ length: 18 }, (_, i) => ({
-  id: `shot-${i}`,
-  name: `SH${String((i + 1) * 10).padStart(4, "0")}`,
-  status: STATUSES[i % STATUSES.length],
-  artist: ["Juan", "Eric", "Sarah K.", "Mike T.", "—"][i % 5],
-  thumb: `https://picsum.photos/seed/${i + 10}/160/90`,
-  hasVersion: i % 3 !== 0,
-  versionNum: Math.floor(Math.random() * 5) + 1,
-}));
+const formatDate = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
 
-const MOCK_REVIEWS = [
-  {
-    id: "rev-1",
-    name: "Bouffant – Beauty Pass v3",
-    date: "Mar 24",
-    shotCount: 6,
-    shots: MOCK_SHOTS.slice(0, 6).map((s) => ({
-      ...s,
-      videoUrl: null,
-      notes: [],
-    })),
-  },
-  {
-    id: "rev-2",
-    name: "Bouffant – Hair Color Approvals",
-    date: "Mar 20",
-    shotCount: 4,
-    shots: MOCK_SHOTS.slice(6, 10).map((s) => ({
-      ...s,
-      videoUrl: null,
-      notes: [],
-    })),
-  },
-  {
-    id: "rev-3",
-    name: "Comp Finals – Scene 12",
-    date: "Mar 15",
-    shotCount: 8,
-    shots: MOCK_SHOTS.slice(10).map((s) => ({
-      ...s,
-      videoUrl: null,
-      notes: [],
-    })),
-  },
-];
+const formatTime = (dateStr) => {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+};
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const css = `
@@ -203,7 +176,7 @@ const css = `
 
   /* ── Status Picker ── */
   .modal-overlay { position:absolute; inset:0; background:rgba(0,0,0,.6); z-index:300; display:flex; align-items:flex-end; backdrop-filter:blur(4px); }
-  .modal-sheet { background:var(--surface); border-radius:16px 16px 0 0; width:100%; padding:20px 0 40px; border-top:1px solid var(--border); }
+  .modal-sheet { background:var(--surface); border-radius:16px 16px 0 0; width:100%; padding:20px 0 40px; border-top:1px solid var(--border); max-height:70vh; overflow-y:auto; }
   .modal-handle { width:36px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 16px; }
   .modal-title { font-size:16px; font-weight:600; padding:0 20px 14px; border-bottom:1px solid var(--border); }
   .status-option { display:flex; align-items:center; gap:12px; padding:14px 20px; cursor:pointer; transition:background .15s; }
@@ -211,6 +184,15 @@ const css = `
   .status-option-name { font-size:14px; }
   .status-option-check { margin-left:auto; color:var(--green); font-size:18px; }
   .modal-cancel { margin:8px 16px 0; padding:13px; background:var(--card); border:none; border-radius:8px; width:calc(100% - 32px); font-family:var(--font-body); font-size:15px; font-weight:600; color:var(--muted); cursor:pointer; }
+
+  /* ── Project Picker ── */
+  .project-picker { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-family:var(--font-body); font-size:13px; color:var(--text); outline:none; appearance:none; -webkit-appearance:none; cursor:pointer; width:100%; }
+  .project-picker:focus { border-color:var(--accent); }
+  .project-bar { padding:10px 16px; border-bottom:1px solid var(--border); }
+
+  /* ── Loading ── */
+  .loading { display:flex; align-items:center; justify-content:center; padding:60px 20px; color:var(--muted); font-size:13px; }
+  .error-msg { color:var(--red); font-size:13px; text-align:center; padding:8px 16px; }
 
   /* ── Toast ── */
   .toast { position:absolute; top:80px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 18px; font-size:13px; font-weight:500; color:var(--text); z-index:500; white-space:nowrap; animation:fadeInOut 2.2s forwards; }
@@ -224,14 +206,15 @@ const css = `
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function StatusPill({ status, small }) {
+  const color = normalizeColor(status?.color);
   return (
     <span className="status-pill" style={{
-      background: status.color + "22",
-      color: status.color,
+      background: color + "22",
+      color: color,
       fontSize: small ? "10px" : undefined,
     }}>
-      <span className="status-dot" style={{ background: status.color }} />
-      {status.name}
+      <span className="status-dot" style={{ background: color }} />
+      {status?.name || 'Unknown'}
     </span>
   );
 }
@@ -248,15 +231,25 @@ function LoginScreen({ onLogin }) {
   const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const handleLogin = async () => {
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
-    setLoading(false);
-    onLogin({ server: server || "demo.ftrackapp.com", user: user || "eric" });
+    setError("");
+    try {
+      if (mode === "password") {
+        throw new Error("Password auth is not supported. Use an API key from your ftrack profile.");
+      }
+      await createSession({ serverUrl: server, apiUser: user, apiKey });
+      onLogin({ server, user });
+    } catch (err) {
+      setError(err.message || "Connection failed");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const ready = server && (mode === "apikey" ? apiKey : user && pass);
+  const ready = server && user && (mode === "apikey" ? apiKey : pass);
 
   return (
     <div className="login">
@@ -273,25 +266,24 @@ function LoginScreen({ onLogin }) {
           <button className={`login-tab ${mode === "apikey" ? "active" : ""}`} onClick={() => setMode("apikey")}>API Key</button>
           <button className={`login-tab ${mode === "password" ? "active" : ""}`} onClick={() => setMode("password")}>Password</button>
         </div>
+        <div className="field">
+          <label>Username</label>
+          <input placeholder="you@studio.com" value={user} onChange={e => setUser(e.target.value)} />
+        </div>
         {mode === "apikey" ? (
           <div className="field">
             <label>API Key</label>
-            <input placeholder="••••••••••••••••" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" />
+            <input placeholder="Your ftrack API key" value={apiKey} onChange={e => setApiKey(e.target.value)} type="password" />
           </div>
         ) : (
-          <>
-            <div className="field">
-              <label>Username</label>
-              <input placeholder="you@studio.com" value={user} onChange={e => setUser(e.target.value)} />
-            </div>
-            <div className="field">
-              <label>Password</label>
-              <input placeholder="••••••••" value={pass} onChange={e => setPass(e.target.value)} type="password" />
-            </div>
-          </>
+          <div className="field">
+            <label>Password</label>
+            <input placeholder="Your password" value={pass} onChange={e => setPass(e.target.value)} type="password" />
+          </div>
         )}
-        <button className="btn-primary" onClick={handleLogin} disabled={loading}>
-          {loading ? "Connecting…" : "Connect"}
+        {error && <div className="error-msg">{error}</div>}
+        <button className="btn-primary" onClick={handleLogin} disabled={loading || !ready}>
+          {loading ? "Connecting..." : "Connect"}
         </button>
       </div>
     </div>
@@ -305,13 +297,57 @@ function PlayerScreen({ shot, onClose }) {
   const [drawMode, setDrawMode] = useState(false);
   const [color, setColor] = useState("#ff4d6a");
   const [brushSize, setBrushSize] = useState("md");
-  const [notes, setNotes] = useState(shot.notes || []);
+  const [notes, setNotes] = useState([]);
+  const [notesLoading, setNotesLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
   const [approval, setApproval] = useState(null);
   const [toast, setToast] = useState("");
+  const [videoUrl, setVideoUrl] = useState(null);
+  const [statuses, setStatuses] = useState([]);
   const lastPos = useRef(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  // Fetch notes for this version
+  useEffect(() => {
+    if (!shot.versionId) { setNotesLoading(false); return; }
+    apiFetchNotes(shot.versionId)
+      .then(data => {
+        setNotes(data.map(n => ({
+          author: [n.author?.first_name, n.author?.last_name].filter(Boolean).join(' ') || 'Unknown',
+          text: n.content,
+          time: formatTime(n.date),
+        })));
+      })
+      .catch(() => {})
+      .finally(() => setNotesLoading(false));
+  }, [shot.versionId]);
+
+  // Try to load video component
+  useEffect(() => {
+    if (!shot.versionId) return;
+    fetchVersionComponents(shot.versionId)
+      .then(async (components) => {
+        const reviewable = components.find(c =>
+          c.name?.includes('ftrackreview') ||
+          c.file_type === '.mp4' ||
+          c.file_type === '.mov' ||
+          c.file_type === '.webm'
+        );
+        if (reviewable) {
+          const url = await getComponentUrl(reviewable.id);
+          if (url) setVideoUrl(url);
+        }
+      })
+      .catch(() => {});
+  }, [shot.versionId]);
+
+  // Fetch statuses for approval buttons
+  useEffect(() => {
+    fetchStatuses()
+      .then(data => setStatuses(data.map(s => ({ ...s, color: normalizeColor(s.color) }))))
+      .catch(() => {});
+  }, []);
 
   const brushPx = { sm: 2, md: 4, lg: 8 }[brushSize];
 
@@ -354,36 +390,74 @@ function PlayerScreen({ shot, onClose }) {
     showToast("Annotation cleared");
   };
 
-  const sendNote = () => {
+  const sendNote = async () => {
     if (!noteText.trim()) return;
-    setNotes(n => [...n, { author: "Eric", text: noteText.trim(), time: "Just now" }]);
-    setNoteText("");
-    showToast("Note added");
+    if (!shot.versionId) {
+      showToast("No version to attach note to");
+      return;
+    }
+    try {
+      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim());
+      setNotes(n => [...n, { author: "You", text: noteText.trim(), time: "Just now" }]);
+      setNoteText("");
+      showToast("Note added");
+    } catch (err) {
+      showToast("Failed to add note");
+    }
   };
 
-  const handleApproval = (type) => {
-    setApproval(a => a === type ? null : type);
-    showToast(type === "approve" ? "✓ Approved" : "✗ Changes requested");
+  const handleApproval = async (type) => {
+    const newApproval = approval === type ? null : type;
+    setApproval(newApproval);
+
+    if (!shot.versionId || !newApproval) {
+      showToast(type === "approve" ? "Approved" : "Changes requested");
+      return;
+    }
+
+    // Find matching status by name
+    const targetName = type === "approve" ? "approved" : null;
+    const rejectNames = ["changes needed", "requires changes", "revise", "not approved", "changes requested"];
+    const matched = type === "approve"
+      ? statuses.find(s => s.name.toLowerCase() === targetName)
+      : statuses.find(s => rejectNames.includes(s.name.toLowerCase()));
+
+    if (matched) {
+      try {
+        await updateVersionStatus(shot.versionId, matched.id);
+        showToast(type === "approve" ? "Approved" : "Changes requested");
+      } catch {
+        showToast("Status update failed");
+      }
+    } else {
+      showToast(type === "approve" ? "Approved (local)" : "Changes requested (local)");
+    }
   };
 
   return (
     <div className="player-screen">
       <Toast msg={toast} />
       <div className="player-header">
-        <div className="back-btn" onClick={onClose}>← Back</div>
+        <div className="back-btn" onClick={onClose}>&#8592; Back</div>
         <div style={{ flex: 1 }}>
           <div className="player-title">{shot.name}</div>
-          <div className="player-title-sub">v{shot.versionNum} · {shot.artist}</div>
+          <div className="player-title-sub">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
         </div>
         <StatusPill status={shot.status} small />
       </div>
 
       {/* Video / Canvas area */}
       <div className="video-area">
-        <div className="video-placeholder">
-          <div className="play-icon">▶</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>No version media</div>
-        </div>
+        {videoUrl ? (
+          <video src={videoUrl} controls playsInline preload="metadata" />
+        ) : (
+          <div className="video-placeholder">
+            <div className="play-icon">&#9654;</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {shot.versionId ? "Loading media..." : "No version media"}
+            </div>
+          </div>
+        )}
         <canvas
           ref={canvasRef}
           className="canvas-overlay"
@@ -394,7 +468,7 @@ function PlayerScreen({ shot, onClose }) {
           onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}
         />
         <button className={`draw-toggle ${drawMode ? "active" : ""}`} onClick={() => setDrawMode(d => !d)}>
-          ✏️ {drawMode ? "Drawing" : "Annotate"}
+          &#9999;&#65039; {drawMode ? "Drawing" : "Annotate"}
         </button>
       </div>
 
@@ -410,7 +484,7 @@ function PlayerScreen({ shot, onClose }) {
             <button key={s} className={`brush-btn ${brushSize === s ? "active" : ""}`}
               onClick={() => setBrushSize(s)}>{s.toUpperCase()}</button>
           ))}
-          <button className="brush-btn" onClick={clearCanvas} style={{ color: "var(--red)" }}>✕</button>
+          <button className="brush-btn" onClick={clearCanvas} style={{ color: "var(--red)" }}>&#10005;</button>
         </div>
       )}
 
@@ -418,15 +492,16 @@ function PlayerScreen({ shot, onClose }) {
         {/* Approval */}
         <div className="approval-row" style={{ paddingTop: 14 }}>
           <button className={`approve-btn approve ${approval === "approve" ? "active" : ""}`}
-            onClick={() => handleApproval("approve")}>✓ Approve</button>
+            onClick={() => handleApproval("approve")}>&#10003; Approve</button>
           <button className={`approve-btn reject ${approval === "reject" ? "active" : ""}`}
-            onClick={() => handleApproval("reject")}>✕ Changes</button>
+            onClick={() => handleApproval("reject")}>&#10005; Changes</button>
         </div>
 
         {/* Notes */}
         <div className="notes-section">
           <div className="notes-title">Notes ({notes.length})</div>
-          {notes.length === 0 && (
+          {notesLoading && <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>Loading notes...</div>}
+          {!notesLoading && notes.length === 0 && (
             <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>No notes yet.</div>
           )}
           {notes.map((n, i) => (
@@ -439,12 +514,12 @@ function PlayerScreen({ shot, onClose }) {
           <div className="note-input-row">
             <textarea
               className="note-input"
-              placeholder="Add a note…"
+              placeholder="Add a note..."
               value={noteText}
               onChange={e => setNoteText(e.target.value)}
               rows={1}
             />
-            <button className="send-btn" onClick={sendNote}>↑</button>
+            <button className="send-btn" onClick={sendNote}>&#8593;</button>
           </div>
         </div>
       </div>
@@ -453,36 +528,82 @@ function PlayerScreen({ shot, onClose }) {
 }
 
 // ─── Reviews Tab ──────────────────────────────────────────────────────────────
-function ReviewsTab() {
+function ReviewsTab({ userInitial }) {
+  const [reviews, setReviews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [detail, setDetail] = useState(null);
+  const [detailShots, setDetailShots] = useState([]);
+  const [detailLoading, setDetailLoading] = useState(false);
   const [player, setPlayer] = useState(null);
+
+  useEffect(() => {
+    fetchReviews()
+      .then(setReviews)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const openDetail = async (review) => {
+    setDetail(review);
+    setDetailLoading(true);
+    setError("");
+    try {
+      const rsos = await fetchReviewShots(review.id);
+      setDetailShots(rsos.map(rso => ({
+        id: rso.id,
+        name: rso.version?.asset?.parent?.name || rso.name || 'Unknown',
+        status: {
+          name: rso.version?.status?.name || 'Unknown',
+          color: normalizeColor(rso.version?.status?.color),
+        },
+        artist: rso.version?.user?.first_name || '',
+        thumb: getThumbnailUrl(rso.version?.thumbnail_id),
+        hasVersion: !!rso.version,
+        versionNum: rso.version?.version || 0,
+        versionId: rso.version?.id,
+      })));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
 
   if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
 
   if (detail) return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div className="header">
-        <div className="back-btn" onClick={() => setDetail(null)}>← Reviews</div>
+        <div className="back-btn" onClick={() => { setDetail(null); setDetailShots([]); }}>&#8592; Reviews</div>
         <div className="header-title" style={{ fontSize: 15 }}>{detail.name}</div>
       </div>
       <div className="scroll">
-        <div className="section-label">{detail.shotCount} shots</div>
-        {detail.shots.map(shot => (
-          <div key={shot.id} className="shot-row" onClick={() => setPlayer(shot)}>
-            <div className="shot-row-inner">
-              <div className="shot-thumb-sm">
-                {shot.hasVersion
-                  ? <img src={shot.thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
-                  : "🎬"}
+        {detailLoading ? (
+          <div className="loading">Loading shots...</div>
+        ) : error ? (
+          <div className="error-msg">{error}</div>
+        ) : (
+          <>
+            <div className="section-label">{detailShots.length} shots</div>
+            {detailShots.map(shot => (
+              <div key={shot.id} className="shot-row" onClick={() => setPlayer(shot)}>
+                <div className="shot-row-inner">
+                  <div className="shot-thumb-sm">
+                    {shot.thumb
+                      ? <img src={shot.thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
+                      : "\uD83C\uDFAC"}
+                  </div>
+                  <div className="shot-info">
+                    <div className="shot-name-lg">{shot.name}</div>
+                    <div className="shot-version">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
+                  </div>
+                  <StatusPill status={shot.status} small />
+                </div>
               </div>
-              <div className="shot-info">
-                <div className="shot-name-lg">{shot.name}</div>
-                <div className="shot-version">v{shot.versionNum} · {shot.artist}</div>
-              </div>
-              <StatusPill status={shot.status} small />
-            </div>
-          </div>
-        ))}
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
@@ -492,25 +613,26 @@ function ReviewsTab() {
       <div className="header">
         <div className="header-title">f<span style={{ color: "var(--accent)" }}>track</span></div>
         <div className="header-right">
-          <div className="avatar">E</div>
+          <div className="avatar">{userInitial}</div>
         </div>
       </div>
       <div className="scroll">
-        <div className="section-label">Active Reviews</div>
-        {MOCK_REVIEWS.map(rev => (
-          <div key={rev.id} className="review-card" onClick={() => setDetail(rev)}>
+        <div className="section-label">Reviews</div>
+        {loading && <div className="loading">Loading reviews...</div>}
+        {error && <div className="error-msg">{error}</div>}
+        {!loading && !error && reviews.length === 0 && (
+          <div className="empty">
+            <div className="empty-icon">&#127916;</div>
+            <div className="empty-text">No review sessions found.</div>
+          </div>
+        )}
+        {reviews.map(rev => (
+          <div key={rev.id} className="review-card" onClick={() => openDetail(rev)}>
             <div className="review-card-inner">
               <div className="review-name">{rev.name}</div>
               <div className="review-meta">
-                <span className="review-date">{rev.date}</span>
-                <span className="review-badge">{rev.shotCount} shots</span>
+                <span className="review-date">{formatDate(rev.created_at)}</span>
               </div>
-            </div>
-            <div className="review-thumbs">
-              {rev.shots.slice(0, 4).map(s => (
-                <img key={s.id} className="review-thumb" src={s.thumb} alt="" />
-              ))}
-              {rev.shotCount > 4 && <div className="review-thumb-more">+{rev.shotCount - 4}</div>}
             </div>
           </div>
         ))}
@@ -521,20 +643,59 @@ function ReviewsTab() {
 
 // ─── Shots Tab ────────────────────────────────────────────────────────────────
 function ShotsTab() {
-  const [shots, setShots] = useState(MOCK_SHOTS);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [shots, setShots] = useState([]);
+  const [statuses, setStatuses] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [shotsLoading, setShotsLoading] = useState(false);
+  const [error, setError] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(null);
-  const [statusModal, setStatusModal] = useState(null); // "single"|"bulk"
+  const [statusModal, setStatusModal] = useState(null);
   const [modalTarget, setModalTarget] = useState(null);
   const [toast, setToast] = useState("");
   const [multiSelect, setMultiSelect] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
+  // Load projects and statuses on mount
+  useEffect(() => {
+    Promise.all([fetchProjects(), fetchStatuses()])
+      .then(([projs, stats]) => {
+        setProjects(projs);
+        setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
+        if (projs.length > 0) setSelectedProjectId(projs[0].id);
+      })
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Load shots when project changes
+  useEffect(() => {
+    if (!selectedProjectId) return;
+    setShotsLoading(true);
+    setError("");
+    fetchShots(selectedProjectId)
+      .then(data => {
+        setShots(data.map(s => ({
+          id: s.id,
+          name: s.name,
+          status: {
+            id: s.status?.id,
+            name: s.status?.name || 'Unknown',
+            color: normalizeColor(s.status?.color),
+          },
+          thumb: getThumbnailUrl(s.thumbnail_id),
+        })));
+      })
+      .catch(err => setError(err.message))
+      .finally(() => setShotsLoading(false));
+  }, [selectedProjectId]);
+
   const filtered = shots.filter(s => {
-    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase()) ||
-      s.artist.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase());
     const matchStatus = !statusFilter || s.status.name === statusFilter;
     return matchSearch && matchStatus;
   });
@@ -551,7 +712,6 @@ function ShotsTab() {
     if (multiSelect) {
       toggleSelect(shot.id);
     } else {
-      // single status change on long-press emulated via tap when not in multi mode
       setModalTarget(shot.id);
       setStatusModal("single");
     }
@@ -564,15 +724,22 @@ function ShotsTab() {
     }
   };
 
-  const applyStatus = (newStatus) => {
-    if (statusModal === "bulk") {
-      setShots(s => s.map(sh => selected.has(sh.id) ? { ...sh, status: newStatus } : sh));
-      showToast(`${selected.size} shots → ${newStatus.name}`);
-      setSelected(new Set());
-      setMultiSelect(false);
-    } else {
-      setShots(s => s.map(sh => sh.id === modalTarget ? { ...sh, status: newStatus } : sh));
-      showToast(`Status → ${newStatus.name}`);
+  const applyStatus = async (newStatus) => {
+    const statusWithColor = { ...newStatus, color: normalizeColor(newStatus.color) };
+    try {
+      if (statusModal === "bulk") {
+        await bulkUpdateStatus([...selected], newStatus.id);
+        setShots(s => s.map(sh => selected.has(sh.id) ? { ...sh, status: statusWithColor } : sh));
+        showToast(`${selected.size} shots \u2192 ${newStatus.name}`);
+        setSelected(new Set());
+        setMultiSelect(false);
+      } else {
+        await updateShotStatus(modalTarget, newStatus.id);
+        setShots(s => s.map(sh => sh.id === modalTarget ? { ...sh, status: statusWithColor } : sh));
+        showToast(`Status \u2192 ${newStatus.name}`);
+      }
+    } catch (err) {
+      showToast("Status update failed");
     }
     setStatusModal(null);
   };
@@ -584,6 +751,8 @@ function ShotsTab() {
   const pressTimer = useRef(null);
   const startPress = (shot) => { pressTimer.current = setTimeout(() => handleLongPress(shot), 500); };
   const endPress = () => clearTimeout(pressTimer.current);
+
+  if (loading) return <div className="loading" style={{ flex: 1 }}>Loading...</div>;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, position: "relative" }}>
@@ -600,9 +769,24 @@ function ShotsTab() {
         </div>
       </div>
 
+      {/* Project Picker */}
+      {projects.length > 1 && (
+        <div className="project-bar">
+          <select
+            className="project-picker"
+            value={selectedProjectId || ''}
+            onChange={e => setSelectedProjectId(e.target.value)}
+          >
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="shots-toolbar">
-        <input className="search-input" placeholder="Search shots…" value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="search-input" placeholder="Search shots..." value={search} onChange={e => setSearch(e.target.value)} />
         <button className={`filter-btn ${statusFilter ? "active" : ""}`}
           onClick={() => { setModalTarget(null); setStatusModal(statusFilter ? null : "filter"); }}>
           {statusFilter ? statusFilter.split(" ")[0] : "Filter"}
@@ -619,13 +803,15 @@ function ShotsTab() {
       )}
 
       <div className="scroll">
-        {filtered.length === 0 && (
+        {shotsLoading && <div className="loading">Loading shots...</div>}
+        {error && <div className="error-msg">{error}</div>}
+        {!shotsLoading && !error && filtered.length === 0 && (
           <div className="empty">
-            <div className="empty-icon">🔍</div>
-            <div className="empty-text">No shots match your search.</div>
+            <div className="empty-icon">&#128269;</div>
+            <div className="empty-text">{shots.length === 0 ? "No shots in this project." : "No shots match your search."}</div>
           </div>
         )}
-        {filtered.map(shot => (
+        {!shotsLoading && filtered.map(shot => (
           <div
             key={shot.id}
             className={`shot-list-item ${selected.has(shot.id) ? "selected" : ""}`}
@@ -637,16 +823,15 @@ function ShotsTab() {
           >
             {multiSelect && (
               <div className={`select-circle ${selected.has(shot.id) ? "checked" : ""}`}>
-                {selected.has(shot.id) && <span style={{ fontSize: 12, color: "#fff" }}>✓</span>}
+                {selected.has(shot.id) && <span style={{ fontSize: 12, color: "#fff" }}>&#10003;</span>}
               </div>
             )}
-            {shot.hasVersion
+            {shot.thumb
               ? <img className="shot-list-thumb" src={shot.thumb} alt="" />
-              : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🎬</div>
+              : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>&#127916;</div>
             }
             <div className="shot-list-info">
               <div className="shot-list-name">{shot.name}</div>
-              <div className="shot-list-artist">{shot.artist}</div>
             </div>
             <div className="shot-list-status">
               <StatusPill status={shot.status} small />
@@ -663,8 +848,8 @@ function ShotsTab() {
             <div className="modal-title">
               {statusModal === "bulk" ? `Set status for ${selected.size} shots` : "Change Status"}
             </div>
-            {STATUSES.map(s => (
-              <div key={s.name} className="status-option" onClick={() => applyStatus(s)}>
+            {statuses.map(s => (
+              <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
                 <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
                 <span className="status-option-name">{s.name}</span>
               </div>
@@ -682,13 +867,13 @@ function ShotsTab() {
             <div className="modal-title">Filter by Status</div>
             <div className="status-option" onClick={() => { setStatusFilter(null); setStatusModal(null); }}>
               <span style={{ fontSize: 14 }}>All shots</span>
-              {!statusFilter && <span className="status-option-check">✓</span>}
+              {!statusFilter && <span className="status-option-check">&#10003;</span>}
             </div>
-            {STATUSES.map(s => (
-              <div key={s.name} className="status-option" onClick={() => { setStatusFilter(s.name); setStatusModal(null); }}>
+            {statuses.map(s => (
+              <div key={s.id} className="status-option" onClick={() => { setStatusFilter(s.name); setStatusModal(null); }}>
                 <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
                 <span className="status-option-name">{s.name}</span>
-                {statusFilter === s.name && <span className="status-option-check">✓</span>}
+                {statusFilter === s.name && <span className="status-option-check">&#10003;</span>}
               </div>
             ))}
             <button className="modal-cancel" onClick={() => setStatusModal(null)}>Cancel</button>
@@ -704,6 +889,8 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [tab, setTab] = useState("reviews");
 
+  const userInitial = auth?.user?.[0]?.toUpperCase() || "?";
+
   if (!auth) return (
     <>
       <style>{css}</style>
@@ -716,17 +903,16 @@ export default function App() {
       <style>{css}</style>
       <div className="app">
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative" }}>
-          {tab === "reviews" && <ReviewsTab />}
+          {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
           {tab === "shots" && <ShotsTab />}
         </div>
         <div className="bottom-nav">
           <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => setTab("reviews")}>
-            <div className="nav-icon">🎬</div>
+            <div className="nav-icon">&#127916;</div>
             <div className="nav-label">Reviews</div>
-            <div className="nav-pill">{MOCK_REVIEWS.length}</div>
           </div>
           <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => setTab("shots")}>
-            <div className="nav-icon">🎞</div>
+            <div className="nav-icon">&#127902;</div>
             <div className="nav-label">Shots</div>
           </div>
         </div>
