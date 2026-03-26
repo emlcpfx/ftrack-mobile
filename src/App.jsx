@@ -4,8 +4,9 @@ import {
   fetchReviews, fetchReviewShots,
   fetchProjects, fetchShots, fetchStatuses, fetchShotVersions,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
-  createNote as apiCreateNote, fetchNotes as apiFetchNotes,
-  getThumbnailUrl, getComponentUrl, fetchVersionComponents,
+  createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
+  fetchNoteCategories,
+  getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -53,10 +54,10 @@ const css = `
 
   body { background: var(--bg); color: var(--text); font-family: var(--font-body); overflow: hidden; font-size:14px; -webkit-font-smoothing:antialiased; }
 
-  .app { display: flex; flex-direction: column; height: 100vh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); }
+  .app { display: flex; flex-direction: column; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
 
   /* ── Login ── */
-  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100vh; padding:32px; gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
+  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
   .login-brand { display:flex; align-items:center; gap:14px; margin-bottom:8px; }
   .login-logo { display:flex; align-items:center; }
   .login-logo img { height:28px; filter: brightness(0) invert(1); }
@@ -121,7 +122,7 @@ const css = `
   .status-pill { border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; letter-spacing:.3px; white-space:nowrap; }
 
   /* ── Player ── */
-  .player-screen { position:absolute; inset:0; background:var(--bg); z-index:200; display:flex; flex-direction:column; }
+  .player-screen { position:absolute; inset:0; background:var(--bg); z-index:200; display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom); }
   .player-header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--border); background:var(--surface); }
   .player-title { font-size:15px; font-weight:600; flex:1; min-width:0; }
   .player-title-sub { font-size:12px; color:var(--muted); margin-top:1px; }
@@ -146,6 +147,9 @@ const css = `
   .note-clickable:active { background:var(--card2); }
   .note-author { font-size:11px; font-weight:600; color:var(--accent); margin-bottom:4px; }
   .note-frame { font-size:10px; font-family:monospace; color:var(--accent2); background:rgba(0,151,206,0.12); padding:2px 6px; border-radius:4px; }
+  .note-delete { background:none; border:none; cursor:pointer; font-size:16px; padding:4px 6px; color:var(--red); opacity:0.7; transition:opacity .15s; }
+  .note-delete:hover, .note-delete:active { opacity:1; }
+  .note-annotation-thumb { width:100%; max-height:120px; object-fit:contain; border-radius:6px; margin:6px 0 4px; background:#000; }
   .note-text { font-size:13px; line-height:1.5; }
   .note-time { font-size:11px; color:var(--muted); margin-top:4px; }
   .note-input-row { display:flex; gap:8px; align-items:flex-end; margin-top:8px; }
@@ -182,8 +186,8 @@ const css = `
   .status-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:5px; }
 
   /* ── Status Picker ── */
-  .modal-overlay { position:absolute; inset:0; background:rgba(0,0,0,.6); z-index:300; display:flex; align-items:flex-end; backdrop-filter:blur(4px); }
-  .modal-sheet { background:var(--surface); border-radius:16px 16px 0 0; width:100%; padding:20px 0 40px; border-top:1px solid var(--border); max-height:70vh; overflow-y:auto; }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:300; display:flex; align-items:flex-end; justify-content:center; backdrop-filter:blur(4px); }
+  .modal-sheet { background:var(--surface); border-radius:16px 16px 0 0; width:100%; max-width:430px; padding:20px 0 40px; border-top:1px solid var(--border); max-height:70vh; overflow-y:auto; }
   .modal-handle { width:36px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 16px; }
   .modal-title { font-size:16px; font-weight:600; padding:0 20px 14px; border-bottom:1px solid var(--border); }
   .status-option { display:flex; align-items:center; gap:12px; padding:14px 20px; cursor:pointer; transition:background .15s; }
@@ -269,7 +273,7 @@ function LoginScreen({ onLogin }) {
         authKey = creds.apiKey;
       }
       await createSession({ serverUrl: server, apiUser: authUser, apiKey: authKey });
-      onLogin({ server, user: authUser });
+      onLogin({ server, user: authUser, apiKey: authKey });
     } catch (err) {
       setError(err.message || "Connection failed");
     } finally {
@@ -334,6 +338,7 @@ function PlayerScreen({ shot, onClose }) {
   const [toast, setToast] = useState("");
   const [videoUrl, setVideoUrl] = useState(null);
   const [statuses, setStatuses] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [fps, setFps] = useState(24);
   const lastPos = useRef(null);
 
@@ -366,13 +371,18 @@ function PlayerScreen({ shot, onClose }) {
     if (!shot.versionId) { setNotesLoading(false); return; }
     apiFetchNotes(shot.versionId)
       .then(data => {
-        setNotes(data.map(n => ({
-          author: [n.author?.first_name, n.author?.last_name].filter(Boolean).join(' ') || 'Unknown',
-          text: n.content,
-          time: formatTime(n.date),
-          frame: n.frame_number,
-          hasAttachment: n.note_components?.length > 0,
-        })));
+        setNotes(data.map(n => {
+          const nc = n.note_components?.[0];
+          return {
+            id: n.id,
+            author: [n.author?.first_name, n.author?.last_name].filter(Boolean).join(' ') || 'Unknown',
+            text: n.content,
+            time: formatTime(n.date),
+            frame: n.frame_number,
+            annotationUrl: nc?.url?.value || null,
+            annotationThumb: nc?.thumbnail_url?.value || nc?.thumbnail_url?.url || null,
+          };
+        }));
       })
       .catch(() => {})
       .finally(() => setNotesLoading(false));
@@ -389,17 +399,20 @@ function PlayerScreen({ shot, onClose }) {
           components.find(c => c.file_type === '.mp4') ||
           components.find(c => c.file_type === '.mov' || c.file_type === '.webm');
         if (reviewable) {
-          const url = getComponentUrl(reviewable.id);
+          const url = getProxiedComponentUrl(reviewable.id);
           if (url) setVideoUrl(url);
         }
       })
       .catch(err => console.error('[Player] Component fetch error:', err));
   }, [shot.versionId]);
 
-  // Fetch statuses for approval buttons
+  // Fetch statuses and note categories
   useEffect(() => {
     fetchStatuses()
       .then(data => setStatuses(data.map(s => ({ ...s, color: normalizeColor(s.color) }))))
+      .catch(() => {});
+    fetchNoteCategories()
+      .then(setCategories)
       .catch(() => {});
   }, []);
 
@@ -466,15 +479,35 @@ function PlayerScreen({ shot, onClose }) {
       let annotationBlob = null;
       const canvas = canvasRef.current;
       if (canvas && hasCanvasDrawing()) {
-        annotationBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        // Composite video frame + annotation strokes into a single JPEG
+        const vid = videoRef.current;
+        const compCanvas = document.createElement('canvas');
+        compCanvas.width = vid?.videoWidth || canvas.width;
+        compCanvas.height = vid?.videoHeight || canvas.height;
+        const ctx = compCanvas.getContext('2d');
+        if (vid && vid.videoWidth) {
+          ctx.drawImage(vid, 0, 0, compCanvas.width, compCanvas.height);
+        }
+        // Scale annotation canvas to match video resolution
+        ctx.drawImage(canvas, 0, 0, compCanvas.width, compCanvas.height);
+        annotationBlob = await new Promise(resolve => compCanvas.toBlob(resolve, 'image/jpeg', 0.92));
       }
-      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), { frameNumber: frame, annotationBlob });
+      const internalCat = categories.find(c => c.name === 'Internal');
+      const localAnnotationDataUrl = annotationBlob
+        ? URL.createObjectURL(annotationBlob) : null;
+      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), {
+        frameNumber: frame,
+        annotationBlob,
+        categoryId: internalCat?.id,
+      });
       setNotes(n => [...n, {
+        id: null,
         author: "You",
         text: noteText.trim(),
         time: "Just now",
         frame,
-        hasAttachment: !!annotationBlob,
+        annotationUrl: localAnnotationDataUrl,
+        annotationThumb: localAnnotationDataUrl,
       }]);
       setNoteText("");
       if (annotationBlob) {
@@ -483,7 +516,8 @@ function PlayerScreen({ shot, onClose }) {
       }
       showToast(annotationBlob ? "Note + annotation added" : "Note added");
     } catch (err) {
-      showToast("Failed to add note");
+      console.error('[sendNote] Error:', err);
+      showToast("Failed: " + (err.message || err));
     }
   };
 
@@ -587,13 +621,39 @@ function PlayerScreen({ shot, onClose }) {
           )}
           {notes.map((n, i) => (
             <div key={i} className={`note-item${n.frame != null ? ' note-clickable' : ''}`}
-              onClick={() => n.frame != null && seekToFrame(n.frame)}>
+              onClick={() => {
+                if (n.frame != null) seekToFrame(n.frame);
+                if (n.annotationUrl) {
+                  // Draw annotation on canvas overlay
+                  const canvas = canvasRef.current;
+                  if (canvas) {
+                    const ctx = canvas.getContext("2d");
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    img.src = n.annotationUrl;
+                  }
+                }
+              }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="note-author">{n.author}{n.hasAttachment ? ' \u{1F3A8}' : ''}</div>
-                {n.frame != null && (
-                  <div className="note-frame">{formatFrameAsTimecode(n.frame)}</div>
-                )}
+                <div className="note-author">{n.author}</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {n.frame != null && (
+                    <div className="note-frame">{formatFrameAsTimecode(n.frame)}</div>
+                  )}
+                  <button className="note-delete" onClick={(e) => {
+                    e.stopPropagation();
+                    if (!n.id) { setNotes(ns => ns.filter((_, j) => j !== i)); return; }
+                    apiDeleteNote(n.id)
+                      .then(() => { setNotes(ns => ns.filter(x => x.id !== n.id)); showToast("Note deleted"); })
+                      .catch(() => showToast("Delete failed"));
+                  }}>&#128465;</button>
+                </div>
               </div>
+              {n.annotationThumb && (
+                <img src={n.annotationThumb} alt="annotation" className="note-annotation-thumb" />
+              )}
               <div className="note-text">{n.text}</div>
               <div className="note-time">{n.time}</div>
             </div>
@@ -1121,13 +1181,51 @@ function ShotsTab() {
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [tab, setTab] = useState("reviews");
+  const [restoring, setRestoring] = useState(true);
+
+  // Restore saved session on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('ftrack_auth');
+      if (saved) {
+        const { server, user, apiKey } = JSON.parse(saved);
+        if (server && user && apiKey) {
+          createSession({ serverUrl: server, apiUser: user, apiKey })
+            .then(() => setAuth({ server, user }))
+            .catch(() => localStorage.removeItem('ftrack_auth'))
+            .finally(() => setRestoring(false));
+          return;
+        }
+      }
+    } catch {}
+    setRestoring(false);
+  }, []);
+
+  const handleLogin = (authData) => {
+    setAuth(authData);
+    // Save credentials for session persistence
+    if (authData.apiKey) {
+      localStorage.setItem('ftrack_auth', JSON.stringify({
+        server: authData.server,
+        user: authData.user,
+        apiKey: authData.apiKey,
+      }));
+    }
+  };
 
   const userInitial = auth?.user?.[0]?.toUpperCase() || "?";
+
+  if (restoring) return (
+    <>
+      <style>{css}</style>
+      <div className="app"><div className="loading" style={{ flex: 1 }}>Connecting...</div></div>
+    </>
+  );
 
   if (!auth) return (
     <>
       <style>{css}</style>
-      <div className="app"><LoginScreen onLogin={setAuth} /></div>
+      <div className="app"><LoginScreen onLogin={handleLogin} /></div>
     </>
   );
 
