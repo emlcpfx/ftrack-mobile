@@ -58,13 +58,17 @@ const css = `
 
   /* ── Login ── */
   .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #252038 0%, var(--bg) 60%); }
-  .login-brand { display:flex; align-items:center; gap:14px; margin-bottom:8px; }
-  .login-logo { display:flex; align-items:center; }
-  .login-logo img { height:28px; filter: brightness(0) invert(1); }
-  .login-divider { width:1px; height:24px; background:var(--border); }
-  .login-sub { font-family:'VT323', monospace; font-size:1.4rem; font-weight:400; color:var(--muted); letter-spacing:0.12em; line-height:1; }
-  .login-sub a { color:var(--muted); text-decoration:none; transition:color .2s; }
-  .login-sub a:hover { color:var(--text); }
+  .brand-logo { display:flex; align-items:center; gap:12px; }
+  .brand-logo img { filter: brightness(0) invert(1); }
+  .brand-logo .brand-divider { width:1px; background:var(--border); }
+  .brand-logo .brand-vfxtools { font-family:'VT323', monospace; font-weight:400; color:#fff; letter-spacing:0.02em; line-height:1; }
+  .brand-logo--lg img { height:28px; }
+  .brand-logo--lg .brand-divider { height:24px; }
+  .brand-logo--lg .brand-vfxtools { font-size:1.85rem; }
+  .brand-logo--sm img { height:22px; }
+  .brand-logo--sm .brand-divider { height:20px; }
+  .brand-logo--sm .brand-vfxtools { font-size:1.5rem; }
+  .login-brand { margin-bottom:8px; }
   .login-form { width:100%; display:flex; flex-direction:column; gap:14px; }
   .login-tabs { display:flex; background:var(--surface); border-radius:8px; padding:3px; gap:2px; }
   .login-tab { flex:1; padding:8px; text-align:center; font-size:13px; font-family:var(--font-body); font-weight:500; border-radius:6px; border:none; cursor:pointer; background:transparent; color:var(--muted); transition:all .2s; }
@@ -81,10 +85,6 @@ const css = `
   .header { padding:14px 20px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--surface); }
   .header-title { font-family:var(--font-body); font-size:18px; font-weight:700; }
   .header-title span { color:var(--accent); }
-  .header-brand { display:flex; align-items:center; gap:12px; }
-  .header-brand img { height:22px; filter: brightness(0) invert(1); }
-  .header-brand .header-divider { width:1px; height:20px; background:var(--border); }
-  .header-brand .header-vfxtools { font-family:'VT323', monospace; font-size:1.15rem; font-weight:400; color:var(--muted); letter-spacing:0.12em; line-height:1; }
   .header-right { display:flex; align-items:center; gap:10px; }
   .avatar { width:32px; height:32px; border-radius:50%; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:#fff; }
 
@@ -255,6 +255,16 @@ function Toast({ msg }) {
   return msg ? <div className="toast">{msg}</div> : null;
 }
 
+function BrandLogo({ size = "sm" }) {
+  return (
+    <div className={`brand-logo brand-logo--${size}`}>
+      <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
+      <div className="brand-divider" />
+      <div className="brand-vfxtools">VFX Tools</div>
+    </div>
+  );
+}
+
 // ─── Login Screen ─────────────────────────────────────────────────────────────
 function LoginScreen({ onLogin }) {
   const [mode, setMode] = useState("apikey");
@@ -290,9 +300,7 @@ function LoginScreen({ onLogin }) {
   return (
     <div className="login">
       <div className="login-brand">
-        <div className="login-logo"><img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" /></div>
-        <div className="login-divider" />
-        <div className="login-sub"><a href="https://www.thevfxtools.com" target="_blank" rel="noopener noreferrer">VFX Tools</a></div>
+        <BrandLogo size="lg" />
       </div>
       <form className="login-form" onSubmit={e => { e.preventDefault(); handleLogin(); }}>
         <div className="field">
@@ -790,11 +798,7 @@ function ReviewsTab({ userInitial }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
       <div className="header">
-        <div className="header-brand">
-          <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
-          <div className="header-divider" />
-          <div className="header-vfxtools">VFX Tools</div>
-        </div>
+        <BrandLogo />
         <div className="header-right">
           <div className="avatar">{userInitial}</div>
         </div>
@@ -1092,11 +1096,7 @@ function ShotsTab() {
       <Toast msg={toast} />
 
       <div className="header">
-        <div className="header-brand">
-          <img src="https://www.ftrack.com/wp-content/uploads/2025/04/FtrackBacklight-Black.svg" alt="ftrack" />
-          <div className="header-divider" />
-          <div className="header-vfxtools">VFX Tools</div>
-        </div>
+        <BrandLogo />
         <div className="header-right">
           {multiSelect ? (
             <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearAll}>Cancel</button>
@@ -1168,9 +1168,9 @@ function ShotsTab() {
         ))}
       </div>
 
-      {/* Bulk bar — pinned to bottom */}
+      {/* Bulk bar — pinned above bottom nav */}
       {multiSelect && selected.size > 0 && (
-        <div className="bulk-bar" style={{ position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 50 }}>
+        <div className="bulk-bar" style={{ position: 'absolute', bottom: 68, left: 0, right: 0, zIndex: 50 }}>
           <div className="bulk-count">{selected.size} selected</div>
           <button className="bulk-action" onClick={selectAll}>All</button>
           <button className="bulk-action" onClick={() => setStatusModal("bulk")}>Set Status</button>
