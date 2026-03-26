@@ -1030,13 +1030,13 @@ function ShotsTab() {
 
       {/* Status Modal for shot */}
       {statusModal === "shot-status" && (
-        <div className="modal-overlay" onClick={() => setStatusModal(null)}>
-          <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
+          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
             <div className="modal-handle" />
             <div className="modal-title">Change Status</div>
             {statuses.map(s => (
               <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
-                <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
+                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
                 <span className="status-option-name">{s.name}</span>
                 {detailShot.status.id === s.id && <span className="status-option-check">&#10003;</span>}
               </div>
@@ -1137,13 +1137,14 @@ function ShotsTab() {
 
       {/* Bulk Status Modal */}
       {statusModal === "bulk" && (
-        <div className="modal-overlay" onClick={() => setStatusModal(null)}>
-          <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
+          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
             <div className="modal-handle" />
             <div className="modal-title">Set status for {selected.size} shots</div>
+            {statuses.length === 0 && <div style={{ padding: '16px 20px', color: 'var(--muted)', fontSize: 13 }}>No statuses loaded.</div>}
             {statuses.map(s => (
               <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
-                <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
+                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
                 <span className="status-option-name">{s.name}</span>
               </div>
             ))}
@@ -1154,8 +1155,8 @@ function ShotsTab() {
 
       {/* Filter Modal */}
       {statusModal === "filter" && (
-        <div className="modal-overlay" onClick={() => setStatusModal(null)}>
-          <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+        <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.6)', zIndex:9999, display:'flex', alignItems:'flex-end', justifyContent:'center', backdropFilter:'blur(4px)' }} onClick={() => setStatusModal(null)}>
+          <div style={{ background:'var(--surface)', borderRadius:'16px 16px 0 0', width:'100%', maxWidth:430, padding:'20px 0 40px', borderTop:'1px solid var(--border)', maxHeight:'70vh', overflowY:'auto' }} onClick={e => e.stopPropagation()}>
             <div className="modal-handle" />
             <div className="modal-title">Filter by Status</div>
             <div className="status-option" onClick={() => { setStatusFilter(null); setStatusModal(null); }}>
@@ -1164,7 +1165,7 @@ function ShotsTab() {
             </div>
             {statuses.map(s => (
               <div key={s.id} className="status-option" onClick={() => { setStatusFilter(s.name); setStatusModal(null); }}>
-                <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
+                <span style={{ background: s.color, width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0 }} />
                 <span className="status-option-name">{s.name}</span>
                 {statusFilter === s.name && <span className="status-option-check">&#10003;</span>}
               </div>
