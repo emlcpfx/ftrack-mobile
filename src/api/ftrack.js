@@ -1,6 +1,7 @@
 import { Session } from '@ftrack/api';
 
 let _session = null;
+let _userId = null;
 
 export async function loginWithPassword({ serverUrl, username, password }) {
   const res = await fetch('/api/auth', {
@@ -18,7 +19,14 @@ export async function createSession({ serverUrl, apiUser, apiKey }) {
   const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
   _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
   await _session.initializing;
+  // Resolve and cache the current user's ID for note authorship etc.
+  const me = await _session.query(`select id from User where username is "${apiUser}"`);
+  _userId = me.data[0]?.id || null;
   return _session;
+}
+
+export function getCurrentUserId() {
+  return _userId;
 }
 
 export function getSession() {
@@ -92,6 +100,18 @@ export async function fetchStatuses() {
 
 // ── Versions & Components ─────────────────────────────────────────────────────
 
+export async function fetchShotVersions(shotId) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, version, status.id, status.name, status.color,
+            thumbnail_id, user.first_name, date
+     from AssetVersion
+     where asset.parent.id is "${shotId}"
+     order by version descending`
+  );
+  return result.data;
+}
+
 export async function fetchVersionComponents(versionId) {
   const s = getSession();
   const result = await s.query(
@@ -118,12 +138,34 @@ export async function updateVersionStatus(versionId, statusId) {
   return getSession().update('AssetVersion', [versionId], { status_id: statusId });
 }
 
-export async function createNote(parentId, parentType, text) {
-  return getSession().create('Note', {
+export async function createNote(parentId, parentType, text, annotationBlob) {
+  const s = getSession();
+  const noteData = {
     content: text,
     parent_id: parentId,
     parent_type: parentType,
-  });
+  };
+  if (_userId) noteData.user_id = _userId;
+  const result = await s.create('Note', noteData);
+  const noteId = result?.data?.id;
+
+  // If there's an annotation image, upload it and attach to the note
+  if (annotationBlob && noteId) {
+    try {
+      const file = new File([annotationBlob], 'annotation.png', { type: 'image/png' });
+      const [componentResult] = await s.createComponent(file);
+      if (componentResult?.data?.id) {
+        await s.create('NoteComponent', {
+          note_id: noteId,
+          component_id: componentResult.data.id,
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to attach annotation image:', err);
+    }
+  }
+
+  return result;
 }
 
 export async function fetchNotes(parentId) {

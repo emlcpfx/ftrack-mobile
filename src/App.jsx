@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import {
   createSession, loginWithPassword,
   fetchReviews, fetchReviewShots,
-  fetchProjects, fetchShots, fetchStatuses,
+  fetchProjects, fetchShots, fetchStatuses, fetchShotVersions,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes,
   getThumbnailUrl, getComponentUrl, fetchVersionComponents,
@@ -201,6 +201,23 @@ const css = `
   /* ── Toast ── */
   .toast { position:absolute; top:80px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 18px; font-size:13px; font-weight:500; color:var(--text); z-index:500; white-space:nowrap; animation:fadeInOut 2.2s forwards; }
   @keyframes fadeInOut { 0%{opacity:0;transform:translateX(-50%) translateY(-8px)} 15%{opacity:1;transform:translateX(-50%) translateY(0)} 75%{opacity:1} 100%{opacity:0} }
+
+  /* ── Shot Detail ── */
+  .shot-detail { display:flex; flex-direction:column; flex:1; }
+  .shot-detail-hero { padding:20px; display:flex; gap:14px; align-items:flex-start; border-bottom:1px solid var(--border); }
+  .shot-detail-thumb { width:100px; height:56px; border-radius:8px; object-fit:cover; background:var(--card2); flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:24px; }
+  .shot-detail-meta { flex:1; min-width:0; }
+  .shot-detail-name { font-size:17px; font-weight:700; margin-bottom:4px; }
+  .shot-detail-actions { display:flex; gap:8px; padding:12px 20px; border-bottom:1px solid var(--border); }
+  .action-btn { flex:1; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--card); font-family:var(--font-body); font-size:13px; font-weight:500; color:var(--text); cursor:pointer; text-align:center; transition:border-color .15s; }
+  .action-btn:active { border-color:var(--accent); }
+  .version-item { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; }
+  .version-item:active { background:var(--surface); }
+  .version-num { width:40px; height:40px; border-radius:8px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:var(--accent); flex-shrink:0; }
+  .version-info { flex:1; min-width:0; }
+  .version-label { font-size:14px; font-weight:600; }
+  .version-meta { font-size:12px; color:var(--muted); margin-top:2px; }
+  .version-status { flex-shrink:0; }
 
   /* ── Misc ── */
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:var(--muted); gap:12px; }
@@ -405,10 +422,25 @@ function PlayerScreen({ shot, onClose }) {
       return;
     }
     try {
-      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim());
+      // Check if canvas has any annotation drawn on it
+      let annotationBlob = null;
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        const hasDrawing = pixels.some((v, i) => i % 4 === 3 && v > 0); // any non-transparent pixel
+        if (hasDrawing) {
+          annotationBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        }
+      }
+      await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), annotationBlob);
       setNotes(n => [...n, { author: "You", text: noteText.trim(), time: "Just now" }]);
       setNoteText("");
-      showToast("Note added");
+      if (annotationBlob) {
+        canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+        setDrawMode(false);
+      }
+      showToast(annotationBlob ? "Note + annotation added" : "Note added");
     } catch (err) {
       showToast("Failed to add note");
     }
@@ -693,6 +725,11 @@ function ShotsTab() {
   const [modalTarget, setModalTarget] = useState(null);
   const [toast, setToast] = useState("");
   const [multiSelect, setMultiSelect] = useState(false);
+  // Shot detail state
+  const [detailShot, setDetailShot] = useState(null);
+  const [versions, setVersions] = useState([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [player, setPlayer] = useState(null);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -700,7 +737,6 @@ function ShotsTab() {
   useEffect(() => {
     Promise.all([fetchProjects(), fetchStatuses()])
       .then(([projs, stats]) => {
-        console.log('[ShotsTab] Projects:', projs.length, 'Statuses:', stats.length);
         setProjects(projs);
         setStatuses(stats.map(s => ({ ...s, color: normalizeColor(s.color) })));
         if (projs.length > 0) setSelectedProjectId(projs[0].id);
@@ -749,8 +785,7 @@ function ShotsTab() {
     if (multiSelect) {
       toggleSelect(shot.id);
     } else {
-      setModalTarget(shot.id);
-      setStatusModal("single");
+      openShotDetail(shot);
     }
   };
 
@@ -759,6 +794,43 @@ function ShotsTab() {
       setMultiSelect(true);
       setSelected(new Set([shot.id]));
     }
+  };
+
+  const openShotDetail = async (shot) => {
+    setDetailShot(shot);
+    setVersionsLoading(true);
+    try {
+      const vers = await fetchShotVersions(shot.id);
+      setVersions(vers.map(v => ({
+        id: v.id,
+        version: v.version,
+        status: {
+          id: v.status?.id,
+          name: v.status?.name || 'Unknown',
+          color: normalizeColor(v.status?.color),
+        },
+        artist: v.user?.first_name || '',
+        date: formatDate(v.date),
+        thumb: getThumbnailUrl(v.thumbnail_id),
+      })));
+    } catch (err) {
+      showToast('Failed to load versions');
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const openVersionInPlayer = (ver) => {
+    setPlayer({
+      id: detailShot.id,
+      name: detailShot.name,
+      status: ver.status,
+      artist: ver.artist,
+      versionNum: ver.version,
+      versionId: ver.id,
+      thumb: ver.thumb,
+      hasVersion: true,
+    });
   };
 
   const applyStatus = async (newStatus) => {
@@ -770,9 +842,10 @@ function ShotsTab() {
         showToast(`${selected.size} shots \u2192 ${newStatus.name}`);
         setSelected(new Set());
         setMultiSelect(false);
-      } else {
-        await updateShotStatus(modalTarget, newStatus.id);
-        setShots(s => s.map(sh => sh.id === modalTarget ? { ...sh, status: statusWithColor } : sh));
+      } else if (statusModal === "shot-status") {
+        await updateShotStatus(detailShot.id, newStatus.id);
+        setDetailShot(prev => ({ ...prev, status: statusWithColor }));
+        setShots(s => s.map(sh => sh.id === detailShot.id ? { ...sh, status: statusWithColor } : sh));
         showToast(`Status \u2192 ${newStatus.name}`);
       }
     } catch (err) {
@@ -791,6 +864,74 @@ function ShotsTab() {
 
   if (loading) return <div className="loading" style={{ flex: 1 }}>Loading...</div>;
 
+  // ── Player view ──
+  if (player) return <PlayerScreen shot={player} onClose={() => setPlayer(null)} />;
+
+  // ── Shot detail view ──
+  if (detailShot) return (
+    <div className="shot-detail" style={{ position: "relative" }}>
+      <Toast msg={toast} />
+      <div className="header">
+        <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); }}>&#8592; Shots</div>
+        <div className="header-title" style={{ fontSize: 15 }}>{detailShot.name}</div>
+      </div>
+
+      <div className="shot-detail-hero">
+        {detailShot.thumb
+          ? <img className="shot-detail-thumb" src={detailShot.thumb} alt="" style={{ width: 100, height: 56, borderRadius: 8, objectFit: 'cover' }} />
+          : <div className="shot-detail-thumb">&#127916;</div>
+        }
+        <div className="shot-detail-meta">
+          <div className="shot-detail-name">{detailShot.name}</div>
+          <StatusPill status={detailShot.status} />
+        </div>
+      </div>
+
+      <div className="shot-detail-actions">
+        <button className="action-btn" onClick={() => setStatusModal("shot-status")}>Change Status</button>
+      </div>
+
+      <div className="scroll">
+        <div className="section-label">Versions ({versions.length})</div>
+        {versionsLoading && <div className="loading">Loading versions...</div>}
+        {!versionsLoading && versions.length === 0 && (
+          <div style={{ color: 'var(--muted)', fontSize: 13, padding: '16px 20px' }}>No versions published yet.</div>
+        )}
+        {versions.map(ver => (
+          <div key={ver.id} className="version-item" onClick={() => openVersionInPlayer(ver)}>
+            <div className="version-num">v{ver.version}</div>
+            <div className="version-info">
+              <div className="version-label">Version {ver.version}</div>
+              <div className="version-meta">{[ver.artist, ver.date].filter(Boolean).join(' \u00B7 ')}</div>
+            </div>
+            <div className="version-status">
+              <StatusPill status={ver.status} small />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Status Modal for shot */}
+      {statusModal === "shot-status" && (
+        <div className="modal-overlay" onClick={() => setStatusModal(null)}>
+          <div className="modal-sheet" onClick={e => e.stopPropagation()}>
+            <div className="modal-handle" />
+            <div className="modal-title">Change Status</div>
+            {statuses.map(s => (
+              <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
+                <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
+                <span className="status-option-name">{s.name}</span>
+                {detailShot.status.id === s.id && <span className="status-option-check">&#10003;</span>}
+              </div>
+            ))}
+            <button className="modal-cancel" onClick={() => setStatusModal(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Shot list view ──
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, position: "relative" }}>
       <Toast msg={toast} />
@@ -877,14 +1018,12 @@ function ShotsTab() {
         ))}
       </div>
 
-      {/* Status Modal */}
-      {(statusModal === "single" || statusModal === "bulk") && (
+      {/* Bulk Status Modal */}
+      {statusModal === "bulk" && (
         <div className="modal-overlay" onClick={() => setStatusModal(null)}>
           <div className="modal-sheet" onClick={e => e.stopPropagation()}>
             <div className="modal-handle" />
-            <div className="modal-title">
-              {statusModal === "bulk" ? `Set status for ${selected.size} shots` : "Change Status"}
-            </div>
+            <div className="modal-title">Set status for {selected.size} shots</div>
             {statuses.map(s => (
               <div key={s.id} className="status-option" onClick={() => applyStatus(s)}>
                 <span className="status-dot" style={{ background: s.color, width: 10, height: 10, borderRadius: "50%", display: "inline-block", flexShrink: 0 }} />
