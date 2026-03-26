@@ -1343,11 +1343,11 @@ function ShotsTab() {
               : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>&#127916;</div>
             }
             <div className="shot-list-info">
-              <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}{shot.artist ? ` / ${shot.artist}` : ''}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div className="shot-list-name" style={{ flex: 1 }}>{shot.name}{shot.type ? ` / ${shot.type}` : ''}{shot.artist ? ` / ${shot.artist}` : ''}</div>
                 <StatusPill status={shot.status} small />
-                {shot.description && <span className="shot-list-artist" style={{ fontStyle: 'italic', opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{shot.description}</span>}
               </div>
+              {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7, lineHeight: 1.4 }}>{shot.description}</div>}
             </div>
           </div>
         ))}
