@@ -1040,7 +1040,7 @@ function ShotsTab() {
     setPlayer({
       id: detailShot.id,
       name: detailShot.name,
-      status: ver.status,
+      status: detailShot.status,
       artist: ver.artist,
       versionNum: ver.version,
       versionId: ver.id,
