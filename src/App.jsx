@@ -9,6 +9,10 @@ import {
   fetchNoteCategories,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
 } from "./api/ftrack";
+import {
+  isPushSupported, subscribeToPush, unsubscribeFromPush, isSubscribed,
+  registerServiceWorker, setVapidPublicKey,
+} from "./api/notifications";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
@@ -85,6 +89,15 @@ const css = `
   .header-title { font-family:var(--font-body); font-size:18px; font-weight:700; }
   .header-title span { color:var(--accent); }
   .header-right { display:flex; align-items:center; gap:10px; }
+  .notif-bell { background:none; border:none; cursor:pointer; font-size:18px; padding:4px; position:relative; line-height:1; }
+  .notif-bell .bell-active { color:var(--accent); }
+  .notif-bell .bell-inactive { color:var(--muted); opacity:.6; }
+  .notif-bell .bell-dot { position:absolute; top:2px; right:2px; width:6px; height:6px; border-radius:50%; background:var(--green); }
+  .notif-setup { position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.6); display:flex; align-items:flex-end; justify-content:center; }
+  .notif-setup-sheet { background:var(--surface); border-radius:16px 16px 0 0; padding:24px 20px calc(24px + env(safe-area-inset-bottom)); width:100%; max-width:430px; }
+  .notif-setup-title { font-size:16px; font-weight:700; margin-bottom:16px; }
+  .notif-setup .field { margin-bottom:12px; }
+  .notif-setup .field input { width:100%; }
   .avatar { width:32px; height:32px; border-radius:50%; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:#fff; }
 
   /* ── Scroll area ── */
@@ -255,6 +268,89 @@ function StatusPill({ status, small }) {
 
 function Toast({ msg }) {
   return msg ? <div className="toast">{msg}</div> : null;
+}
+
+function NotificationBell() {
+  const [subscribed, setSubscribed] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
+  const [vapidKey, setVapidKey] = useState(() => localStorage.getItem('vapid_public_key') || '');
+  const supported = isPushSupported();
+
+  useEffect(() => {
+    if (supported) isSubscribed().then(setSubscribed);
+  }, [supported]);
+
+  // Register service worker on mount
+  useEffect(() => { registerServiceWorker(); }, []);
+
+  const toggle = async () => {
+    if (!vapidKey && !subscribed) {
+      setShowSetup(true);
+      return;
+    }
+    setLoading(true);
+    try {
+      if (subscribed) {
+        await unsubscribeFromPush();
+        setSubscribed(false);
+      } else {
+        await subscribeToPush();
+        setSubscribed(true);
+      }
+    } catch (err) {
+      alert(err.message);
+    }
+    setLoading(false);
+  };
+
+  const saveAndSubscribe = async () => {
+    if (!vapidKey.trim()) return;
+    setVapidPublicKey(vapidKey.trim());
+    setShowSetup(false);
+    setLoading(true);
+    try {
+      await subscribeToPush();
+      setSubscribed(true);
+    } catch (err) {
+      alert(err.message);
+    }
+    setLoading(false);
+  };
+
+  if (!supported) return null;
+
+  return (
+    <>
+      <button className="notif-bell" onClick={toggle} disabled={loading} title={subscribed ? "Notifications on" : "Enable notifications"}>
+        <span className={subscribed ? "bell-active" : "bell-inactive"}>{loading ? "\u23F3" : "\uD83D\uDD14"}</span>
+        {subscribed && <span className="bell-dot" />}
+      </button>
+      {showSetup && (
+        <div className="notif-setup" onClick={() => setShowSetup(false)}>
+          <div className="notif-setup-sheet" onClick={e => e.stopPropagation()}>
+            <div className="notif-setup-title">Enable Push Notifications</div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.5 }}>
+              Get notified when a task status changes to QC Ready.
+              Run <code style={{ background: 'var(--card)', padding: '2px 6px', borderRadius: 4 }}>node scripts/generate-vapid-keys.mjs</code> and paste the public key below.
+            </p>
+            <div className="field">
+              <label>VAPID Public Key</label>
+              <input
+                value={vapidKey}
+                onChange={e => setVapidKey(e.target.value)}
+                placeholder="BPnr3G..."
+                style={{ fontFamily: 'monospace', fontSize: 11 }}
+              />
+            </div>
+            <button className="btn-primary" onClick={saveAndSubscribe} style={{ width: '100%', marginTop: 8 }}>
+              Enable Notifications
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 function BrandLogo({ size = "sm" }) {
@@ -841,6 +937,7 @@ function ReviewsTab({ userInitial }) {
       <div className="header">
         <BrandLogo />
         <div className="header-right">
+          <NotificationBell />
           <div className="avatar">{userInitial}</div>
         </div>
       </div>
