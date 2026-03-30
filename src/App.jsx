@@ -1746,7 +1746,7 @@ function ChatTab() {
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
             {settingsProvider === 'claude'
               ? 'Get your key at console.anthropic.com. Uses Haiku 4.5 (~$0.001/msg).'
-              : 'Get your key at aistudio.google.com. Uses Gemini 2.5 Flash (~$0.0001/msg).'}
+              : 'Get your key at aistudio.google.com. Uses Gemini 3.0 Flash (~$0.0001/msg).'}
           </div>
         </div>
         <button className="btn-primary" onClick={handleSaveSettings} disabled={!settingsKey.trim()}
