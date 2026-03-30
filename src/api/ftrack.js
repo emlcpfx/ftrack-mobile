@@ -254,13 +254,13 @@ export async function fetchShotVersions(shotId, taskId) {
   let query;
   if (taskId) {
     query = `select id, version, status.id, status.name, status.color,
-            thumbnail_id, user.first_name, date
+            thumbnail_id, user.first_name, date, task_id
      from AssetVersion
      where task_id is "${taskId}"
      order by version descending`;
   } else {
     query = `select id, version, status.id, status.name, status.color,
-            thumbnail_id, user.first_name, date
+            thumbnail_id, user.first_name, date, task_id
      from AssetVersion
      where asset.parent.id is "${shotId}"
      order by version descending`;
