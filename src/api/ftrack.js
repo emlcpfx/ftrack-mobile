@@ -176,26 +176,21 @@ export async function fetchShotStatuses(projectId) {
   const psId = proj.data[0]?.project_schema?.id;
   if (!psId) return [];
 
-  // 2. Get the Shot ObjectType ID
-  const ot = await s.query('select id from ObjectType where name is "Shot"');
-  const shotTypeId = ot.data[0]?.id;
-  if (!shotTypeId) return [];
-
-  // 3. Find the Shot schema under this project schema
+  // 2. Get all schemas under this project schema (Shot + all Task types)
   const schemas = await s.query(
     `select id, object_type_id from Schema where project_schema_id is "${psId}"`
   );
-  const shotSchema = schemas.data.find(sc => sc.object_type_id === shotTypeId);
-  if (!shotSchema) return [];
+  if (schemas.data.length === 0) return [];
 
-  // 4. Get valid status IDs from SchemaStatus
+  // 3. Get valid status IDs from ALL schemas (not just Shot)
+  const schemaIds = schemas.data.map(sc => sc.id);
   const ss = await s.query(
-    `select status_id from SchemaStatus where schema_id is "${shotSchema.id}"`
+    `select status_id from SchemaStatus where schema_id in (${schemaIds.map(id => `"${id}"`).join(',')})`
   );
-  const statusIds = ss.data.map(x => x.status_id).filter(Boolean);
+  const statusIds = [...new Set(ss.data.map(x => x.status_id).filter(Boolean))];
   if (statusIds.length === 0) return [];
 
-  // 5. Fetch the actual Status entities
+  // 4. Fetch the actual Status entities
   const statuses = await s.query(
     `select id, name, color from Status where id in (${statusIds.map(id => `"${id}"`).join(',')})`
   );
