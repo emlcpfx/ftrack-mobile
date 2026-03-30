@@ -8,6 +8,9 @@ import {
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
+  addVersionToReview, removeFromReview, createReviewSession,
+  searchVersionsForReview, fetchTasksByStatus, fetchLatestVersionForTask,
+  fetchLatestVersionForShot, transferNotes, searchReviews,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -231,6 +234,57 @@ const css = `
   .version-label { font-size:14px; font-weight:600; }
   .version-meta { font-size:12px; color:var(--muted); margin-top:2px; }
   .version-status { flex-shrink:0; }
+
+  /* ── Review Edit Mode ── */
+  .edit-bar { display:flex; align-items:center; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .edit-bar-title { flex:1; font-size:13px; font-weight:600; color:var(--muted); }
+  .edit-btn { background:none; border:1px solid var(--border); border-radius:6px; padding:6px 12px; font-family:var(--font-body); font-size:12px; font-weight:500; color:var(--text); cursor:pointer; }
+  .edit-btn:active { border-color:var(--accent); }
+  .edit-btn--accent { border-color:var(--accent); color:var(--accent); }
+  .edit-btn--danger { border-color:var(--red); color:var(--red); }
+  .shot-row-edit { display:flex; align-items:center; gap:0; }
+  .shot-row-delete { width:44px; height:100%; display:flex; align-items:center; justify-content:center; color:var(--red); font-size:20px; cursor:pointer; flex-shrink:0; padding:10px 0; }
+  .shot-row-delete:active { opacity:.6; }
+  .transfer-btn { display:flex; align-items:center; gap:6px; background:rgba(33,150,243,.1); border:1px solid var(--blue); border-radius:8px; padding:10px 14px; margin:0 16px 8px; cursor:pointer; font-family:var(--font-body); font-size:13px; font-weight:500; color:var(--blue); }
+  .transfer-btn:active { opacity:.7; }
+
+  /* ── Add to Review Modal ── */
+  .add-review-search { padding:12px 16px; border-bottom:1px solid var(--border); }
+  .add-review-results { padding:8px 0; }
+  .add-review-item { display:flex; align-items:center; gap:12px; padding:10px 16px; cursor:pointer; transition:background .15s; }
+  .add-review-item:active { background:var(--card); }
+  .add-review-item .shot-thumb-sm { width:64px; height:36px; }
+  .add-review-check { width:24px; height:24px; border-radius:50%; border:2px solid var(--border); display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .add-review-check.added { background:var(--green); border-color:var(--green); }
+
+  /* ── Chat Tab ── */
+  .chat-container { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .chat-messages { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:16px; display:flex; flex-direction:column; gap:12px; }
+  .chat-messages::-webkit-scrollbar { display:none; }
+  .chat-msg { max-width:85%; padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.5; word-wrap:break-word; }
+  .chat-msg--user { align-self:flex-end; background:var(--accent); color:#fff; border-bottom-right-radius:4px; }
+  .chat-msg--bot { align-self:flex-start; background:var(--card); color:var(--text); border-bottom-left-radius:4px; }
+  .chat-msg--bot code { background:var(--bg); padding:1px 4px; border-radius:3px; font-size:12px; }
+  .chat-msg--system { align-self:center; background:rgba(33,150,243,.1); color:var(--blue); font-size:12px; padding:6px 12px; border-radius:20px; }
+  .chat-msg--error { align-self:center; background:rgba(231,76,60,.1); color:var(--red); font-size:12px; padding:6px 12px; border-radius:20px; }
+  .chat-input-row { display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--border); background:var(--surface); padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
+  .chat-input { flex:1; background:var(--bg); border:1px solid var(--border); border-radius:20px; padding:10px 16px; font-family:var(--font-body); font-size:13px; color:var(--text); outline:none; resize:none; min-height:40px; max-height:100px; }
+  .chat-input:focus { border-color:var(--accent); }
+  .chat-send { background:var(--accent); border:none; border-radius:50%; width:40px; height:40px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:16px; color:#fff; flex-shrink:0; }
+  .chat-send:disabled { opacity:.4; }
+  .chat-suggestions { display:flex; flex-wrap:wrap; gap:6px; padding:8px 16px; }
+  .chat-suggestion { background:var(--card); border:1px solid var(--border); border-radius:16px; padding:6px 12px; font-size:12px; color:var(--muted); cursor:pointer; font-family:var(--font-body); }
+  .chat-suggestion:active { border-color:var(--accent); color:var(--accent); }
+  .chat-action-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; margin-top:8px; }
+  .chat-action-row { display:flex; gap:8px; margin-top:8px; }
+  .chat-action-btn { padding:6px 14px; border-radius:6px; border:none; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer; }
+  .chat-action-btn--primary { background:var(--accent); color:#fff; }
+  .chat-action-btn--secondary { background:var(--card); color:var(--muted); border:1px solid var(--border); }
+  .chat-typing { display:flex; gap:4px; align-items:center; padding:4px 0; }
+  .chat-typing span { width:6px; height:6px; border-radius:50%; background:var(--muted); animation:chatBounce .6s infinite alternate; }
+  .chat-typing span:nth-child(2) { animation-delay:.2s; }
+  .chat-typing span:nth-child(3) { animation-delay:.4s; }
+  @keyframes chatBounce { 0%{opacity:.3;transform:translateY(0)} 100%{opacity:1;transform:translateY(-4px)} }
 
   /* ── Misc ── */
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:var(--muted); gap:12px; }
@@ -726,6 +780,19 @@ function ReviewsTab({ userInitial }) {
   const [detailShots, setDetailShots] = useState([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [player, setPlayer] = useState(null);
+  const [toast, setToast] = useState("");
+  // Edit mode
+  const [editMode, setEditMode] = useState(false);
+  // Add-to-review
+  const [addMode, setAddMode] = useState(false);
+  const [addSearch, setAddSearch] = useState("");
+  const [addResults, setAddResults] = useState([]);
+  const [addSearching, setAddSearching] = useState(false);
+  const [addedIds, setAddedIds] = useState(new Set());
+  // Transfer feedback
+  const [transferring, setTransferring] = useState(false);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
   useEffect(() => {
     fetchReviews()
@@ -737,17 +804,15 @@ function ReviewsTab({ userInitial }) {
   // Browser back button support
   useEffect(() => {
     const onPopState = (e) => {
-      const view = e.state?.view;
+      if (addMode) { setAddMode(false); return; }
       if (player) { setPlayer(null); }
-      else if (detail) { setDetail(null); setDetailShots([]); }
+      else if (detail) { setDetail(null); setDetailShots([]); setEditMode(false); }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   });
 
-  const openDetail = async (review) => {
-    history.pushState({ view: "detail" }, "");
-    setDetail(review);
+  const loadDetail = async (review) => {
     setDetailLoading(true);
     setError("");
     try {
@@ -781,31 +846,175 @@ function ReviewsTab({ userInitial }) {
     }
   };
 
+  const openDetail = async (review) => {
+    history.pushState({ view: "detail" }, "");
+    setDetail(review);
+    await loadDetail(review);
+  };
+
   const openPlayer = (shot) => {
     history.pushState({ view: "player" }, "");
     setPlayer(shot);
   };
 
-  const closePlayer = () => {
-    setPlayer(null);
-  };
+  const closePlayer = () => setPlayer(null);
 
   const closeDetail = () => {
     setDetail(null);
     setDetailShots([]);
+    setEditMode(false);
     history.back();
+  };
+
+  // ── Remove shot from review ──
+  const handleRemoveShot = async (shot) => {
+    try {
+      await removeFromReview(shot.id);
+      setDetailShots(prev => prev.filter(s => s.id !== shot.id));
+      showToast(`Removed ${shot.name}`);
+    } catch (err) {
+      showToast("Remove failed: " + (err.message || err));
+    }
+  };
+
+  // ── Add to review: search ──
+  const searchTimer = useRef(null);
+  const handleAddSearch = (term) => {
+    setAddSearch(term);
+    clearTimeout(searchTimer.current);
+    if (term.trim().length < 2) { setAddResults([]); return; }
+    searchTimer.current = setTimeout(async () => {
+      setAddSearching(true);
+      try {
+        const versions = await searchVersionsForReview(term.trim());
+        // Group by shot, keep latest version per shot
+        const byShot = {};
+        for (const v of versions) {
+          const shotName = v.asset?.parent?.name || 'Unknown';
+          const shotId = v.asset?.parent?.id;
+          if (!byShot[shotId] || v.version > byShot[shotId].version) {
+            byShot[shotId] = {
+              versionId: v.id,
+              shotId,
+              shotName,
+              version: v.version,
+              taskType: v.task?.type?.name || '',
+              artist: v.user?.first_name || '',
+              thumb: getThumbnailUrl(v.thumbnail_id),
+              status: { name: v.status?.name || '', color: normalizeColor(v.status?.color) },
+            };
+          }
+        }
+        setAddResults(Object.values(byShot));
+      } catch (err) {
+        showToast("Search failed");
+      } finally {
+        setAddSearching(false);
+      }
+    }, 400);
+  };
+
+  const handleAddVersion = async (item) => {
+    if (addedIds.has(item.versionId)) return;
+    try {
+      await addVersionToReview(detail.id, item.versionId, detailShots.length);
+      setAddedIds(prev => new Set([...prev, item.versionId]));
+      showToast(`Added ${item.shotName}`);
+      // Reload the detail to get the new RSO with proper id
+      await loadDetail(detail);
+    } catch (err) {
+      showToast("Add failed: " + (err.message || err));
+    }
+  };
+
+  // ── Transfer feedback ──
+  const handleTransferFeedback = async () => {
+    if (!detail) return;
+    setTransferring(true);
+    let totalTransferred = 0;
+    try {
+      for (const shot of detailShots) {
+        if (!shot.versionId || !shot.taskId) continue;
+        const count = await transferNotes(shot.versionId, shot.taskId, 'Task');
+        totalTransferred += count;
+      }
+      showToast(`Transferred ${totalTransferred} note${totalTransferred !== 1 ? 's' : ''} to tasks`);
+    } catch (err) {
+      showToast("Transfer failed: " + (err.message || err));
+    } finally {
+      setTransferring(false);
+    }
   };
 
   if (player) return <PlayerScreen shot={player} onClose={closePlayer} shots={detailShots} onSwitch={setPlayer} onStatusChange={(shotId, newStatus) => {
     setDetailShots(prev => prev.map(s => s.id === shotId ? { ...s, status: newStatus } : s));
   }} />;
 
+  // ── Add-to-review search view ──
+  if (addMode) return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <Toast msg={toast} />
+      <div className="header">
+        <div className="back-btn" onClick={() => { setAddMode(false); setAddSearch(""); setAddResults([]); setAddedIds(new Set()); }}>&#8592; Back</div>
+        <div className="header-title" style={{ fontSize: 15 }}>Add to Review</div>
+      </div>
+      <div className="add-review-search">
+        <input
+          className="search-input"
+          placeholder="Search shots by name..."
+          value={addSearch}
+          onChange={e => handleAddSearch(e.target.value)}
+          autoFocus
+          style={{ width: '100%' }}
+        />
+      </div>
+      <div className="scroll">
+        {addSearching && <div className="loading">Searching...</div>}
+        {!addSearching && addSearch.length >= 2 && addResults.length === 0 && (
+          <div className="empty"><div className="empty-text">No versions found matching "{addSearch}"</div></div>
+        )}
+        {addResults.map(item => (
+          <div key={item.versionId} className="add-review-item" onClick={() => handleAddVersion(item)}>
+            <div className="shot-thumb-sm" style={{ width: 64, height: 36, borderRadius: 6, background: 'var(--card2)', overflow: 'hidden', flexShrink: 0 }}>
+              {item.thumb ? <img src={item.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+            </div>
+            <div className="shot-info" style={{ flex: 1, minWidth: 0 }}>
+              <div className="shot-name-lg">{item.shotName}{item.taskType ? ` / ${item.taskType}` : ''}</div>
+              <div className="shot-version">v{item.version}{item.artist ? ` \u00B7 ${item.artist}` : ''}</div>
+            </div>
+            <div className={`add-review-check ${addedIds.has(item.versionId) ? 'added' : ''}`}>
+              {addedIds.has(item.versionId) && <span style={{ fontSize: 12, color: '#fff' }}>&#10003;</span>}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
+  // ── Review detail view ──
   if (detail) return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <Toast msg={toast} />
       <div className="header">
         <div className="back-btn" onClick={closeDetail}>&#8592; Reviews</div>
-        <div className="header-title" style={{ fontSize: 15 }}>{detail.name}</div>
+        <div className="header-title" style={{ fontSize: 15, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail.name}</div>
+        <div className="header-right">
+          {editMode ? (
+            <button className="edit-btn edit-btn--accent" onClick={() => setEditMode(false)}>Done</button>
+          ) : (
+            <button className="edit-btn" onClick={() => setEditMode(true)}>Edit</button>
+          )}
+        </div>
       </div>
+
+      {/* Action bar */}
+      {editMode && (
+        <div className="edit-bar">
+          <div className="edit-bar-title">{detailShots.length} items</div>
+          <button className="edit-btn edit-btn--accent" onClick={() => { setAddMode(true); history.pushState({ view: "add" }, ""); }}>+ Add</button>
+        </div>
+      )}
+
       <div className="scroll">
         {detailLoading ? (
           <div className="loading">Loading shots...</div>
@@ -813,20 +1022,34 @@ function ReviewsTab({ userInitial }) {
           <div className="error-msg">{error}</div>
         ) : (
           <>
+            {/* Transfer feedback button */}
+            {!editMode && detailShots.some(s => s.taskId && s.versionId) && (
+              <div className="transfer-btn" onClick={handleTransferFeedback} style={transferring ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
+                &#128228; {transferring ? 'Transferring...' : 'Transfer feedback to tasks'}
+              </div>
+            )}
+
             <div className="section-label">{detailShots.length} shots</div>
             {detailShots.map(shot => (
-              <div key={shot.id} className="shot-row" onClick={() => openPlayer(shot)}>
-                <div className="shot-row-inner">
-                  <div className="shot-thumb-sm">
-                    {shot.thumb
-                      ? <img src={shot.thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
-                      : "\uD83C\uDFAC"}
+              <div key={shot.id} className="shot-row">
+                <div className="shot-row-edit">
+                  {editMode && (
+                    <div className="shot-row-delete" onClick={(e) => { e.stopPropagation(); handleRemoveShot(shot); }}>
+                      &#9866;
+                    </div>
+                  )}
+                  <div className="shot-row-inner" style={{ flex: 1 }} onClick={() => !editMode && openPlayer(shot)}>
+                    <div className="shot-thumb-sm">
+                      {shot.thumb
+                        ? <img src={shot.thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
+                        : "\uD83C\uDFAC"}
+                    </div>
+                    <div className="shot-info">
+                      <div className="shot-name-lg">{shot.name}{shot.taskType ? ` / ${shot.taskType}` : ''}</div>
+                      <div className="shot-version">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
+                    </div>
+                    <StatusPill status={shot.status} small />
                   </div>
-                  <div className="shot-info">
-                    <div className="shot-name-lg">{shot.name}{shot.taskType ? ` / ${shot.taskType}` : ''}</div>
-                    <div className="shot-version">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
-                  </div>
-                  <StatusPill status={shot.status} small />
                 </div>
               </div>
             ))}
@@ -1368,6 +1591,254 @@ function ShotsTab() {
   );
 }
 
+// ─── Chat Tab ────────────────────────────────────────────────────────────────
+function ChatTab() {
+  const [messages, setMessages] = useState([
+    { type: 'bot', text: 'Hey! I can help you manage reviews and tasks. Try things like:' },
+  ]);
+  const [input, setInput] = useState('');
+  const [processing, setProcessing] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [reviews, setReviews] = useState([]);
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    fetchProjects().then(setProjects).catch(() => {});
+    fetchReviews().then(setReviews).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages]);
+
+  const suggestions = [
+    'Put all "Client Review" tasks into a review',
+    'Create a new review session',
+    'Show tasks with status "In Progress"',
+    'Add shot ABC_010 to review "Dailies"',
+  ];
+
+  const addMsg = (type, text) => setMessages(prev => [...prev, { type, text }]);
+
+  const parseAndExecute = async (text) => {
+    const lower = text.toLowerCase().trim();
+
+    // ── Create review session ──
+    const createMatch = lower.match(/create\s+(?:a\s+)?(?:new\s+)?review\s+(?:session\s+)?(?:called|named)?\s*["""]?(.+?)["""]?\s*$/);
+    if (createMatch || lower.match(/create\s+(?:a\s+)?(?:new\s+)?review\b/)) {
+      const name = createMatch?.[1] || null;
+      if (!name) {
+        addMsg('bot', 'What would you like to name the review session? Say something like: **create review called "Dailies 03/30"**');
+        return;
+      }
+      addMsg('system', `Creating review "${name}"...`);
+      try {
+        const result = await createReviewSession(name);
+        setReviews(prev => [{ id: result.data.id, name, created_at: new Date().toISOString() }, ...prev]);
+        addMsg('bot', `Created review session **"${name}"**. You can now add items to it.`);
+      } catch (err) {
+        addMsg('error', `Failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // ── Put tasks with status X into review Y ──
+    const putMatch = lower.match(/(?:put|add|move)\s+(?:all\s+|every\s+)?(?:tasks?|shots?|versions?)\s+(?:with\s+)?(?:(?:the\s+)?status\s+)?["""](.+?)["""]\s+(?:in(?:to)?|to)\s+(?:(?:the\s+)?review\s+)?["""](.+?)["""]/);
+    if (putMatch) {
+      const statusName = putMatch[1];
+      const reviewName = putMatch[2];
+      // Find the review
+      const review = reviews.find(r => r.name.toLowerCase().includes(reviewName.toLowerCase()));
+      if (!review) {
+        addMsg('bot', `I couldn't find a review matching **"${reviewName}"**. Available reviews:\n${reviews.slice(0, 10).map(r => `- ${r.name}`).join('\n')}`);
+        return;
+      }
+      if (projects.length === 0) {
+        addMsg('error', 'No projects loaded. Please try again.');
+        return;
+      }
+      addMsg('system', `Finding tasks with status "${statusName}"...`);
+      try {
+        let allTasks = [];
+        for (const proj of projects) {
+          const tasks = await fetchTasksByStatus(proj.id, statusName);
+          allTasks = allTasks.concat(tasks.map(t => ({ ...t, projectName: proj.name })));
+        }
+        if (allTasks.length === 0) {
+          addMsg('bot', `No tasks found with status **"${statusName}"** across your projects.`);
+          return;
+        }
+        addMsg('system', `Found ${allTasks.length} task${allTasks.length !== 1 ? 's' : ''}. Adding to "${review.name}"...`);
+        let added = 0, skipped = 0;
+        for (const task of allTasks) {
+          try {
+            const version = await fetchLatestVersionForTask(task.id);
+            if (!version) {
+              // Try parent shot
+              const shotVersion = task.parent?.id ? await fetchLatestVersionForShot(task.parent.id) : null;
+              if (shotVersion) {
+                await addVersionToReview(review.id, shotVersion.id, added);
+                added++;
+              } else {
+                skipped++;
+              }
+            } else {
+              await addVersionToReview(review.id, version.id, added);
+              added++;
+            }
+          } catch {
+            skipped++;
+          }
+        }
+        let msg = `Added **${added}** item${added !== 1 ? 's' : ''} to **"${review.name}"**`;
+        if (skipped > 0) msg += ` (${skipped} skipped — no published versions)`;
+        addMsg('bot', msg);
+      } catch (err) {
+        addMsg('error', `Failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // ── Show tasks with status X ──
+    const showMatch = lower.match(/(?:show|list|find|get)\s+(?:all\s+)?(?:tasks?|shots?)\s+(?:with\s+)?(?:(?:the\s+)?status\s+)?["""](.+?)["""]/);
+    if (showMatch) {
+      const statusName = showMatch[1];
+      addMsg('system', `Searching for "${statusName}" tasks...`);
+      try {
+        let allTasks = [];
+        for (const proj of projects) {
+          const tasks = await fetchTasksByStatus(proj.id, statusName);
+          allTasks = allTasks.concat(tasks.map(t => ({ ...t, projectName: proj.name })));
+        }
+        if (allTasks.length === 0) {
+          addMsg('bot', `No tasks found with status **"${statusName}"**.`);
+        } else {
+          const lines = allTasks.slice(0, 30).map(t => {
+            const shotName = t.parent?.name || '';
+            return `- **${shotName}** / ${t.type?.name || t.name} (${t.projectName})`;
+          });
+          if (allTasks.length > 30) lines.push(`...and ${allTasks.length - 30} more`);
+          addMsg('bot', `Found **${allTasks.length}** task${allTasks.length !== 1 ? 's' : ''} with status "${statusName}":\n${lines.join('\n')}`);
+        }
+      } catch (err) {
+        addMsg('error', `Failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // ── Add shot X to review Y ──
+    const addShotMatch = lower.match(/add\s+(?:shot\s+)?["""]?(\S+)["""]?\s+to\s+(?:(?:the\s+)?review\s+)?["""](.+?)["""]/);
+    if (addShotMatch) {
+      const shotSearch = addShotMatch[1];
+      const reviewName = addShotMatch[2];
+      const review = reviews.find(r => r.name.toLowerCase().includes(reviewName.toLowerCase()));
+      if (!review) {
+        addMsg('bot', `Review **"${reviewName}"** not found.`);
+        return;
+      }
+      addMsg('system', `Searching for "${shotSearch}"...`);
+      try {
+        const versions = await searchVersionsForReview(shotSearch);
+        if (versions.length === 0) {
+          addMsg('bot', `No versions found for **"${shotSearch}"**.`);
+          return;
+        }
+        // Use latest version of first match
+        const v = versions[0];
+        await addVersionToReview(review.id, v.id, 0);
+        addMsg('bot', `Added **${v.asset?.parent?.name || shotSearch}** v${v.version} to **"${review.name}"**`);
+      } catch (err) {
+        addMsg('error', `Failed: ${err.message}`);
+      }
+      return;
+    }
+
+    // ── List reviews ──
+    if (lower.match(/(?:list|show|get)\s+(?:all\s+)?reviews?/)) {
+      if (reviews.length === 0) {
+        addMsg('bot', 'No review sessions found.');
+      } else {
+        const lines = reviews.slice(0, 20).map(r => `- **${r.name}** (${formatDate(r.created_at)})`);
+        addMsg('bot', `Found **${reviews.length}** review${reviews.length !== 1 ? 's' : ''}:\n${lines.join('\n')}`);
+      }
+      return;
+    }
+
+    // ── Fallback ──
+    addMsg('bot', `I'm not sure how to do that. Here's what I can help with:\n\n- **"Put all \`Status Name\` tasks into review \`Review Name\`"**\n- **"Create review called \`Name\`"**\n- **"Show tasks with status \`Status Name\`"**\n- **"Add shot ABC_010 to review \`Review Name\`"**\n- **"List reviews"**\n\nMake sure to put status names and review names in quotes.`);
+  };
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || processing) return;
+    addMsg('user', text);
+    setInput('');
+    setProcessing(true);
+    try {
+      await parseAndExecute(text);
+    } catch (err) {
+      addMsg('error', `Something went wrong: ${err.message}`);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  // Simple markdown-like rendering for bold
+  const renderText = (text) => {
+    const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+    return parts.map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={i}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return <code key={i}>{part.slice(1, -1)}</code>;
+      }
+      return part;
+    });
+  };
+
+  return (
+    <div className="chat-container">
+      <div className="header">
+        <BrandLogo />
+        <div className="header-title" style={{ fontSize: 15 }}>Chat</div>
+      </div>
+      <div className="chat-messages" ref={scrollRef}>
+        {messages.map((msg, i) => (
+          <div key={i} className={`chat-msg chat-msg--${msg.type}`}>
+            {msg.text.split('\n').map((line, j) => (
+              <div key={j}>{renderText(line)}</div>
+            ))}
+          </div>
+        ))}
+        {processing && (
+          <div className="chat-msg chat-msg--bot">
+            <div className="chat-typing"><span /><span /><span /></div>
+          </div>
+        )}
+      </div>
+      {messages.length <= 2 && !processing && (
+        <div className="chat-suggestions">
+          {suggestions.map((s, i) => (
+            <div key={i} className="chat-suggestion" onClick={() => { setInput(s); }}>{s}</div>
+          ))}
+        </div>
+      )}
+      <div className="chat-input-row">
+        <textarea
+          className="chat-input"
+          placeholder="Tell me what to do..."
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
+          rows={1}
+        />
+        <button className="chat-send" onClick={handleSend} disabled={processing || !input.trim()}>&#8593;</button>
+      </div>
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [auth, setAuth] = useState(null);
@@ -1427,6 +1898,7 @@ export default function App() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", minHeight: 0 }}>
           {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
           {tab === "shots" && <ShotsTab />}
+          {tab === "chat" && <ChatTab />}
         </div>
         <div className="bottom-nav">
           <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => setTab("reviews")}>
@@ -1436,6 +1908,10 @@ export default function App() {
           <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => setTab("shots")}>
             <div className="nav-icon">&#127902;</div>
             <div className="nav-label">Shots</div>
+          </div>
+          <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>
+            <div className="nav-icon">&#128172;</div>
+            <div className="nav-label">Chat</div>
           </div>
         </div>
       </div>

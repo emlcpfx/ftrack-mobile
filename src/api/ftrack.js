@@ -332,6 +332,127 @@ export async function deleteNote(noteId) {
   return getSession().delete('Note', [noteId]);
 }
 
+// ── Review Management ────────────────────────────────────────────────────────
+
+/** Add an AssetVersion to a ReviewSession */
+export async function addVersionToReview(reviewSessionId, versionId, sortOrder = 0) {
+  const s = getSession();
+  return s.create('ReviewSessionObject', {
+    review_session_id: reviewSessionId,
+    asset_version_id: versionId,
+    name: '',
+    version: 'auto',
+    sort_order: sortOrder,
+  });
+}
+
+/** Remove a ReviewSessionObject from a review */
+export async function removeFromReview(reviewSessionObjectId) {
+  return getSession().delete('ReviewSessionObject', [reviewSessionObjectId]);
+}
+
+/** Create a new ReviewSession */
+export async function createReviewSession(name) {
+  const s = getSession();
+  return s.create('ReviewSession', { name });
+}
+
+/** Search for versions by shot name, optionally filtered by project */
+export async function searchVersionsForReview(searchTerm, projectId) {
+  const s = getSession();
+  const projectFilter = projectId ? ` and asset.parent.project.id is "${projectId}"` : '';
+  const result = await s.query(
+    `select id, version, asset.parent.name, asset.parent.id,
+            task.id, task.type.name,
+            thumbnail_id, user.first_name,
+            status.name, status.color
+     from AssetVersion
+     where asset.parent.name like "%${searchTerm}%"${projectFilter}
+     order by asset.parent.name, version descending
+     limit 50`
+  );
+  return result.data;
+}
+
+/** Fetch tasks by status name within a project (for Chat commands) */
+export async function fetchTasksByStatus(projectId, statusName) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, name, parent.name, parent.id, type.name,
+            status.id, status.name, status.color
+     from Task
+     where project.id is "${projectId}" and status.name is "${statusName}"
+     limit 200`
+  );
+  return result.data;
+}
+
+/** Fetch latest version for a task (used to add task's version to review) */
+export async function fetchLatestVersionForTask(taskId) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, version, thumbnail_id
+     from AssetVersion
+     where task.id is "${taskId}"
+     order by version descending
+     limit 1`
+  );
+  return result.data[0] || null;
+}
+
+/** Fetch latest version for a shot */
+export async function fetchLatestVersionForShot(shotId) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, version, thumbnail_id
+     from AssetVersion
+     where asset.parent.id is "${shotId}"
+     order by version descending
+     limit 1`
+  );
+  return result.data[0] || null;
+}
+
+/** Transfer notes from one entity to another (copy notes from review version to task) */
+export async function transferNotes(sourceId, targetId, targetType) {
+  const s = getSession();
+  // Fetch all notes from source
+  const notes = await s.query(
+    `select id, content, frame_number, category_id
+     from Note
+     where parent_id is "${sourceId}"
+     order by date ascending`
+  );
+  let count = 0;
+  for (const note of notes.data) {
+    const noteData = {
+      content: note.content,
+      parent_id: targetId,
+      parent_type: targetType,
+      is_todo: true,
+    };
+    if (_userId) noteData.user_id = _userId;
+    if (note.frame_number != null) noteData.frame_number = note.frame_number;
+    if (note.category_id) noteData.category_id = note.category_id;
+    await s.create('Note', noteData);
+    count++;
+  }
+  return count;
+}
+
+/** Search reviews by name */
+export async function searchReviews(searchTerm) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, name, created_at
+     from ReviewSession
+     where name like "%${searchTerm}%"
+     order by created_at descending
+     limit 20`
+  );
+  return result.data;
+}
+
 // ── Media ─────────────────────────────────────────────────────────────────────
 
 export function getThumbnailUrl(thumbnailId, size = 160) {
