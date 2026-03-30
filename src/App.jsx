@@ -6,7 +6,7 @@ import {
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
-  fetchNoteCategories,
+  fetchNoteCategories, fetchNoteCounts,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
   addVersionToReview, removeFromReview,
   searchVersionsForReview, transferNotes,
@@ -246,6 +246,24 @@ const css = `
   .shot-row-delete:active { opacity:.6; }
   .transfer-btn { display:flex; align-items:center; gap:6px; background:rgba(33,150,243,.1); border:1px solid var(--blue); border-radius:8px; padding:10px 14px; margin:0 16px 8px; cursor:pointer; font-family:var(--font-body); font-size:13px; font-weight:500; color:var(--blue); }
   .transfer-btn:active { opacity:.7; }
+
+  /* ── Transfer Feedback Modal ── */
+  .transfer-modal { background:var(--surface); border-radius:16px 16px 0 0; width:100%; max-width:430px; max-height:85vh; display:flex; flex-direction:column; border-top:1px solid var(--border); }
+  .transfer-modal-header { display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border); }
+  .transfer-modal-title { font-size:16px; font-weight:700; }
+  .transfer-modal-close { font-size:24px; color:var(--muted); cursor:pointer; padding:0 4px; line-height:1; }
+  .transfer-modal-close:active { color:var(--text); }
+  .transfer-modal-info { padding:12px 20px; font-size:12px; color:var(--muted); border-bottom:1px solid var(--border); line-height:1.5; }
+  .transfer-select-all { display:flex; align-items:center; gap:10px; padding:12px 20px; border-bottom:1px solid var(--border); cursor:pointer; }
+  .transfer-select-all:active { background:var(--card); }
+  .transfer-modal-list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
+  .transfer-modal-list::-webkit-scrollbar { display:none; }
+  .transfer-modal-item { display:flex; align-items:center; gap:10px; padding:10px 20px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; }
+  .transfer-modal-item:active { background:var(--card); }
+  .transfer-modal-item.selected { background:rgba(199,125,186,.06); }
+  .transfer-note-badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:10px; background:var(--card); color:var(--muted); white-space:nowrap; flex-shrink:0; }
+  .transfer-note-badge.has-notes { background:rgba(33,150,243,.12); color:var(--blue); }
+  .transfer-modal-actions { display:flex; gap:10px; padding:16px 20px; border-top:1px solid var(--border); padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
 
   /* ── Add to Review Modal ── */
   .add-review-search { padding:12px 16px; border-bottom:1px solid var(--border); }
@@ -788,17 +806,33 @@ function ReviewsTab({ userInitial }) {
   const [addResults, setAddResults] = useState([]);
   const [addSearching, setAddSearching] = useState(false);
   const [addedIds, setAddedIds] = useState(new Set());
-  // Transfer feedback
+  // Project filter
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  // Transfer feedback modal
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferItems, setTransferItems] = useState([]);
+  const [transferSelected, setTransferSelected] = useState(new Set());
+  const [transferLoading, setTransferLoading] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [transferProgress, setTransferProgress] = useState('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
+  // Load projects on mount
   useEffect(() => {
-    fetchReviews()
+    fetchProjects().then(setProjects).catch(() => {});
+  }, []);
+
+  // Load reviews (filtered by project when selected)
+  useEffect(() => {
+    setLoading(true);
+    setError("");
+    fetchReviews(selectedProjectId || undefined)
       .then(setReviews)
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [selectedProjectId]);
 
   // Browser back button support
   useEffect(() => {
@@ -926,18 +960,62 @@ function ReviewsTab({ userInitial }) {
     }
   };
 
-  // ── Transfer feedback ──
-  const handleTransferFeedback = async () => {
-    if (!detail) return;
+  // ── Transfer feedback modal ──
+  const openTransferModal = async () => {
+    setTransferModalOpen(true);
+    setTransferLoading(true);
+    setTransferProgress('');
+    try {
+      // Build items with note counts
+      const eligibleShots = detailShots.filter(s => s.versionId && s.taskId);
+      const versionIds = eligibleShots.map(s => s.versionId);
+      const noteCounts = await fetchNoteCounts(versionIds);
+      const items = eligibleShots.map(s => ({
+        ...s,
+        noteCount: noteCounts[s.versionId] || 0,
+      }));
+      setTransferItems(items);
+      // Pre-select items that have notes
+      setTransferSelected(new Set(items.filter(i => i.noteCount > 0).map(i => i.id)));
+    } catch (err) {
+      showToast("Failed to load notes: " + (err.message || err));
+      setTransferModalOpen(false);
+    } finally {
+      setTransferLoading(false);
+    }
+  };
+
+  const toggleTransferItem = (id) => {
+    setTransferSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleTransferAll = () => {
+    if (transferSelected.size === transferItems.length) {
+      setTransferSelected(new Set());
+    } else {
+      setTransferSelected(new Set(transferItems.map(i => i.id)));
+    }
+  };
+
+  const executeTransfer = async () => {
+    const selected = transferItems.filter(i => transferSelected.has(i.id));
+    if (selected.length === 0) return;
     setTransferring(true);
     let totalTransferred = 0;
     try {
-      for (const shot of detailShots) {
-        if (!shot.versionId || !shot.taskId) continue;
-        const count = await transferNotes(shot.versionId, shot.taskId, 'Task');
+      for (let i = 0; i < selected.length; i++) {
+        const item = selected[i];
+        setTransferProgress(`Transferring ${i + 1}/${selected.length}: ${item.name}...`);
+        const count = await transferNotes(item.versionId, item.taskId, 'Task');
         totalTransferred += count;
       }
-      showToast(`Transferred ${totalTransferred} note${totalTransferred !== 1 ? 's' : ''} to tasks`);
+      setTransferProgress('');
+      setTransferModalOpen(false);
+      showToast(`Transferred ${totalTransferred} note${totalTransferred !== 1 ? 's' : ''} to ${selected.length} task${selected.length !== 1 ? 's' : ''}`);
     } catch (err) {
       showToast("Transfer failed: " + (err.message || err));
     } finally {
@@ -1023,8 +1101,8 @@ function ReviewsTab({ userInitial }) {
           <>
             {/* Transfer feedback button */}
             {!editMode && detailShots.some(s => s.taskId && s.versionId) && (
-              <div className="transfer-btn" onClick={handleTransferFeedback} style={transferring ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
-                &#128228; {transferring ? 'Transferring...' : 'Transfer feedback to tasks'}
+              <div className="transfer-btn" onClick={openTransferModal}>
+                &#128228; Transfer feedback to tasks
               </div>
             )}
 
@@ -1055,6 +1133,76 @@ function ReviewsTab({ userInitial }) {
           </>
         )}
       </div>
+
+      {/* Transfer Feedback Modal */}
+      {transferModalOpen && (
+        <div className="modal-overlay" onClick={() => !transferring && setTransferModalOpen(false)}>
+          <div className="transfer-modal" onClick={e => e.stopPropagation()}>
+            <div className="transfer-modal-header">
+              <div className="transfer-modal-title">Transfer Feedback</div>
+              <div className="transfer-modal-close" onClick={() => !transferring && setTransferModalOpen(false)}>&times;</div>
+            </div>
+            {transferLoading ? (
+              <div className="loading" style={{ padding: '40px 20px' }}>Loading notes...</div>
+            ) : (
+              <>
+                <div className="transfer-modal-info">
+                  <span>Select items to transfer notes from review versions to their linked tasks.</span>
+                </div>
+                <div className="transfer-select-all" onClick={toggleTransferAll}>
+                  <div className={`select-circle ${transferSelected.size === transferItems.length ? 'checked' : ''}`}>
+                    {transferSelected.size === transferItems.length && <span style={{ fontSize: 11, color: '#fff' }}>&#10003;</span>}
+                  </div>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                    {transferSelected.size === transferItems.length ? 'Deselect all' : 'Select all'}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 'auto' }}>
+                    {transferSelected.size} of {transferItems.length} selected
+                  </span>
+                </div>
+                <div className="transfer-modal-list">
+                  {transferItems.map(item => (
+                    <div key={item.id} className={`transfer-modal-item ${transferSelected.has(item.id) ? 'selected' : ''}`} onClick={() => !transferring && toggleTransferItem(item.id)}>
+                      <div className={`select-circle ${transferSelected.has(item.id) ? 'checked' : ''}`}>
+                        {transferSelected.has(item.id) && <span style={{ fontSize: 11, color: '#fff' }}>&#10003;</span>}
+                      </div>
+                      <div className="shot-thumb-sm" style={{ width: 56, height: 32, borderRadius: 4, flexShrink: 0, overflow: 'hidden' }}>
+                        {item.thumb ? <img src={item.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}{item.taskType ? ` / ${item.taskType}` : ''}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>v{item.versionNum}{item.artist ? ` \u00B7 ${item.artist}` : ''}</div>
+                      </div>
+                      <div className={`transfer-note-badge ${item.noteCount > 0 ? 'has-notes' : ''}`}>
+                        {item.noteCount} {item.noteCount === 1 ? 'note' : 'notes'}
+                      </div>
+                    </div>
+                  ))}
+                  {transferItems.length === 0 && (
+                    <div className="empty" style={{ padding: '30px 20px' }}>
+                      <div className="empty-text">No items with linked tasks to transfer feedback to.</div>
+                    </div>
+                  )}
+                </div>
+                {transferProgress && (
+                  <div style={{ padding: '8px 16px', fontSize: 12, color: 'var(--accent)', textAlign: 'center' }}>{transferProgress}</div>
+                )}
+                <div className="transfer-modal-actions">
+                  <button className="modal-cancel" onClick={() => !transferring && setTransferModalOpen(false)} disabled={transferring}>Cancel</button>
+                  <button
+                    className="btn-primary"
+                    style={{ flex: 1 }}
+                    onClick={executeTransfer}
+                    disabled={transferring || transferSelected.size === 0}
+                  >
+                    {transferring ? 'Transferring...' : `Transfer ${transferSelected.size} item${transferSelected.size !== 1 ? 's' : ''}`}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -1066,8 +1214,23 @@ function ReviewsTab({ userInitial }) {
           <div className="avatar">{userInitial}</div>
         </div>
       </div>
+      {/* Project filter */}
+      {projects.length > 1 && (
+        <div className="project-bar">
+          <select
+            className="project-picker"
+            value={selectedProjectId}
+            onChange={e => setSelectedProjectId(e.target.value)}
+          >
+            <option value="">All Projects</option>
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="scroll">
-        <div className="section-label">Reviews</div>
+        <div className="section-label">Reviews{selectedProjectId ? '' : ' (all projects)'}</div>
         {loading && <div className="loading">Loading reviews...</div>}
         {error && <div className="error-msg">{error}</div>}
         {!loading && !error && reviews.length === 0 && (

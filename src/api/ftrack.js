@@ -24,8 +24,29 @@ export function getSession() {
 
 // ── Reviews ───────────────────────────────────────────────────────────────────
 
-export async function fetchReviews() {
+export async function fetchReviews(projectId) {
   const s = getSession();
+  if (projectId) {
+    // Find reviews that contain versions belonging to this project
+    const rsoResult = await s.query(
+      `select review_session.id, review_session.name, review_session.created_at
+       from ReviewSessionObject
+       where asset_version.asset.parent.project.id is "${projectId}"
+       order by review_session.created_at descending
+       limit 200`
+    );
+    // Deduplicate by review session id
+    const seen = new Set();
+    const reviews = [];
+    for (const rso of rsoResult.data) {
+      const rs = rso.review_session;
+      if (rs && !seen.has(rs.id)) {
+        seen.add(rs.id);
+        reviews.push({ id: rs.id, name: rs.name, created_at: rs.created_at });
+      }
+    }
+    return reviews;
+  }
   const result = await s.query(
     `select id, name, created_at
      from ReviewSession
@@ -326,6 +347,20 @@ export async function fetchNotes(parentId) {
      order by date ascending`
   );
   return result.data;
+}
+
+export async function fetchNoteCounts(parentIds) {
+  if (!parentIds.length) return {};
+  const s = getSession();
+  const result = await s.query(
+    `select parent_id, id from Note
+     where parent_id in (${parentIds.map(id => `"${id}"`).join(',')})`
+  );
+  const counts = {};
+  for (const note of result.data) {
+    counts[note.parent_id] = (counts[note.parent_id] || 0) + 1;
+  }
+  return counts;
 }
 
 export async function deleteNote(noteId) {
