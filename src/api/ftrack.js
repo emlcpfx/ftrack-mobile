@@ -333,7 +333,9 @@ export async function fetchNotes(parentId) {
   const s = getSession();
   const result = await s.query(
     `select id, content, date, frame_number,
-            author.first_name, author.last_name,
+            author.first_name, author.last_name, author.id,
+            category.id, category.name,
+            in_reply_to_id,
             note_components.component_id,
             note_components.url,
             note_components.thumbnail_url
@@ -342,6 +344,21 @@ export async function fetchNotes(parentId) {
      order by date ascending`
   );
   return result.data;
+}
+
+/** Create a reply to a note */
+export async function createReply(parentNoteId, parentEntityId, parentEntityType, text, { categoryId } = {}) {
+  const s = getSession();
+  const noteData = {
+    content: text,
+    parent_id: parentEntityId,
+    parent_type: parentEntityType,
+    in_reply_to_id: parentNoteId,
+    is_todo: false,
+  };
+  if (_userId) noteData.user_id = _userId;
+  if (categoryId) noteData.category_id = categoryId;
+  return s.create('Note', noteData);
 }
 
 export async function fetchNoteCounts(parentIds) {

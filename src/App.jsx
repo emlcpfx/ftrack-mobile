@@ -6,7 +6,8 @@ import {
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
   bulkUpdateTaskStatus, bulkUpdateVersionStatus,
-  createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
+  createNote as apiCreateNote, createReply as apiCreateReply,
+  fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories, fetchNoteCounts,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
   addVersionToReview, removeFromReview, createReviewSession,
@@ -163,6 +164,31 @@ const css = `
   .note-input { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:var(--font-body); font-size:13px; color:var(--text); outline:none; resize:none; min-height:42px; max-height:100px; transition:border-color .2s; }
   .note-input:focus { border-color:var(--accent); }
   .send-btn { background:var(--accent); border:none; border-radius:8px; width:42px; height:42px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:18px; color:#fff; flex-shrink:0; }
+
+  /* ── Note Category & Mention ── */
+  .note-cat-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .note-cat-chip { padding:4px 10px; border-radius:12px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:var(--card); color:var(--muted); font-family:var(--font-body); white-space:nowrap; }
+  .note-cat-chip.active { border-color:var(--accent); color:var(--accent); background:rgba(199,125,186,.1); }
+  .note-category-label { font-size:10px; font-weight:600; background:rgba(33,150,243,.1); color:var(--blue); padding:1px 6px; border-radius:4px; }
+  .mention-dropdown { position:absolute; bottom:100%; left:0; right:0; background:var(--surface); border:1px solid var(--border); border-radius:8px 8px 0 0; max-height:150px; overflow-y:auto; z-index:10; box-shadow:0 -4px 12px rgba(0,0,0,.3); }
+  .mention-dropdown::-webkit-scrollbar { display:none; }
+  .mention-item { padding:10px 14px; cursor:pointer; font-size:13px; display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border); }
+  .mention-item:active { background:var(--card); }
+  .mention-item-name { font-weight:600; }
+  .mention-item-user { font-size:11px; color:var(--muted); }
+
+  /* ── Note Replies ── */
+  .note-reply-btn { background:none; border:none; cursor:pointer; font-size:11px; color:var(--accent); font-family:var(--font-body); font-weight:500; padding:2px 0; }
+  .note-reply-btn:active { opacity:.7; }
+  .note-replies { margin-top:6px; padding-left:12px; border-left:2px solid var(--border); display:flex; flex-direction:column; gap:6px; }
+  .note-reply { background:var(--bg); border-radius:6px; padding:6px 8px; }
+  .note-reply-author { font-size:10px; font-weight:600; color:var(--accent); }
+  .note-reply-text { font-size:12px; line-height:1.4; margin-top:2px; }
+  .note-reply-time { font-size:10px; color:var(--muted); margin-top:2px; }
+  .note-reply-input-row { display:flex; gap:6px; margin-top:6px; align-items:flex-end; }
+  .note-reply-input { flex:1; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:var(--font-body); font-size:12px; color:var(--text); outline:none; resize:none; min-height:32px; }
+  .note-reply-input:focus { border-color:var(--accent); }
+  .note-reply-send { background:var(--accent); border:none; border-radius:6px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:14px; color:#fff; flex-shrink:0; }
   .approval-row { display:flex; gap:8px; padding:0 16px 16px; }
   .approve-btn { flex:1; padding:12px; border-radius:8px; border:1px solid; font-family:var(--font-body); font-size:14px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; justify-content:center; gap:6px; }
   .approve-btn.approve { border-color:var(--green); color:var(--green); background:rgba(76,175,80,.08); }
@@ -481,8 +507,17 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
   const [videoUrl, setVideoUrl] = useState(null);
   const [statuses, setStatuses] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [selectedCategory, setSelectedCategory] = useState(null);
   const [fps, setFps] = useState(24);
   const lastPos = useRef(null);
+  // @mentions
+  const [members, setMembers] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null);
+  const [mentionResults, setMentionResults] = useState([]);
+  const noteInputRef = useRef(null);
+  // Replies
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [replyText, setReplyText] = useState('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -508,12 +543,12 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
     vid.pause();
   };
 
-  // Fetch notes for this version
+  // Fetch notes for this version (with reply threading)
   useEffect(() => {
     if (!shot.versionId) { setNotesLoading(false); return; }
     apiFetchNotes(shot.versionId)
       .then(data => {
-        setNotes(data.map(n => {
+        const allNotes = data.map(n => {
           const nc = n.note_components?.[0];
           return {
             id: n.id,
@@ -521,14 +556,34 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
             text: n.content,
             time: formatTime(n.date),
             frame: n.frame_number,
+            category: n.category?.name || null,
+            inReplyToId: n.in_reply_to_id || null,
             annotationUrl: nc?.url?.value || null,
             annotationThumb: nc?.thumbnail_url?.value || nc?.thumbnail_url?.url || null,
           };
-        }));
+        });
+        // Separate top-level notes and replies
+        const replyMap = {};
+        const topLevel = [];
+        for (const n of allNotes) {
+          if (n.inReplyToId) {
+            if (!replyMap[n.inReplyToId]) replyMap[n.inReplyToId] = [];
+            replyMap[n.inReplyToId].push(n);
+          } else {
+            topLevel.push(n);
+          }
+        }
+        // Attach replies to their parent
+        setNotes(topLevel.map(n => ({ ...n, replies: replyMap[n.id] || [] })));
       })
       .catch(() => {})
       .finally(() => setNotesLoading(false));
   }, [shot.versionId]);
+
+  // Fetch project members for @mentions
+  useEffect(() => {
+    fetchProjectMembers().then(setMembers).catch(() => {});
+  }, []);
 
   // Try to load video component
   useEffect(() => {
@@ -634,13 +689,14 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
         ctx.drawImage(canvas, 0, 0, compCanvas.width, compCanvas.height);
         annotationBlob = await new Promise(resolve => compCanvas.toBlob(resolve, 'image/jpeg', 0.92));
       }
-      const internalCat = categories.find(c => c.name === 'Internal');
+      const catId = selectedCategory || categories.find(c => c.name === 'Internal')?.id || null;
+      const catName = categories.find(c => c.id === catId)?.name || null;
       const localAnnotationDataUrl = annotationBlob
         ? URL.createObjectURL(annotationBlob) : null;
       await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), {
         frameNumber: frame,
         annotationBlob,
-        categoryId: internalCat?.id,
+        categoryId: catId,
       });
       setNotes(n => [...n, {
         id: null,
@@ -648,6 +704,8 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
         text: noteText.trim(),
         time: "Just now",
         frame,
+        category: catName,
+        replies: [],
         annotationUrl: localAnnotationDataUrl,
         annotationThumb: localAnnotationDataUrl,
       }]);
@@ -660,6 +718,55 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
     } catch (err) {
       console.error('[sendNote] Error:', err);
       showToast("Failed: " + (err.message || err));
+    }
+  };
+
+  // @mention handling
+  const handleNoteInput = (e) => {
+    const val = e.target.value;
+    setNoteText(val);
+    // Check for @ trigger
+    const cursorPos = e.target.selectionStart;
+    const textBefore = val.substring(0, cursorPos);
+    const atMatch = textBefore.match(/@(\w*)$/);
+    if (atMatch) {
+      const query = atMatch[1].toLowerCase();
+      setMentionQuery(atMatch[0]);
+      setMentionResults(members.filter(m => {
+        const name = [m.first_name, m.last_name].filter(Boolean).join(' ').toLowerCase();
+        return name.includes(query) || (m.username || '').toLowerCase().includes(query);
+      }).slice(0, 5));
+    } else {
+      setMentionQuery(null);
+      setMentionResults([]);
+    }
+  };
+
+  const insertMention = (member) => {
+    const name = [member.first_name, member.last_name].filter(Boolean).join(' ');
+    const newText = noteText.replace(/@\w*$/, `@${name} `);
+    setNoteText(newText);
+    setMentionQuery(null);
+    setMentionResults([]);
+    noteInputRef.current?.focus();
+  };
+
+  // Reply to note
+  const sendReply = async (parentNote) => {
+    if (!replyText.trim() || !parentNote.id) return;
+    try {
+      await apiCreateReply(parentNote.id, shot.versionId, 'AssetVersion', replyText.trim(), {
+        categoryId: selectedCategory || null,
+      });
+      setNotes(prev => prev.map(n => {
+        if (n.id !== parentNote.id) return n;
+        return { ...n, replies: [...(n.replies || []), { id: null, author: 'You', text: replyText.trim(), time: 'Just now' }] };
+      }));
+      setReplyText('');
+      setReplyingTo(null);
+      showToast('Reply added');
+    } catch (err) {
+      showToast('Reply failed: ' + (err.message || err));
     }
   };
 
@@ -788,11 +895,10 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
             <div style={{ color: "var(--muted)", fontSize: 13, padding: "8px 0" }}>No notes yet.</div>
           )}
           {notes.map((n, i) => (
-            <div key={i} className={`note-item${n.frame != null ? ' note-clickable' : ''}`}
-              onClick={() => {
+            <div key={n.id || i} className="note-item">
+              <div className={n.frame != null ? 'note-clickable' : ''} onClick={() => {
                 if (n.frame != null) seekToFrame(n.frame);
                 if (n.annotationUrl) {
-                  // Draw annotation on canvas overlay
                   const canvas = canvasRef.current;
                   if (canvas) {
                     const ctx = canvas.getContext("2d");
@@ -804,37 +910,93 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
                   }
                 }
               }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div className="note-author">{n.author}</div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  {n.frame != null && (
-                    <div className="note-frame">{formatFrameAsTimecode(n.frame)}</div>
-                  )}
-                  <button className="note-delete" onClick={(e) => {
-                    e.stopPropagation();
-                    if (!n.id) { setNotes(ns => ns.filter((_, j) => j !== i)); return; }
-                    apiDeleteNote(n.id)
-                      .then(() => { setNotes(ns => ns.filter(x => x.id !== n.id)); showToast("Note deleted"); })
-                      .catch(() => showToast("Delete failed"));
-                  }}>&#128465;</button>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div className="note-author">{n.author}</div>
+                    {n.category && <span className="note-category-label">{n.category}</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    {n.frame != null && (
+                      <div className="note-frame">{formatFrameAsTimecode(n.frame)}</div>
+                    )}
+                    <button className="note-delete" onClick={(e) => {
+                      e.stopPropagation();
+                      if (!n.id) { setNotes(ns => ns.filter((_, j) => j !== i)); return; }
+                      apiDeleteNote(n.id)
+                        .then(() => { setNotes(ns => ns.filter(x => x.id !== n.id)); showToast("Note deleted"); })
+                        .catch(() => showToast("Delete failed"));
+                    }}>&#128465;</button>
+                  </div>
+                </div>
+                {n.annotationThumb && (
+                  <img src={n.annotationThumb} alt="annotation" className="note-annotation-thumb" />
+                )}
+                <div className="note-text">{n.text}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+                  <div className="note-time">{n.time}</div>
+                  {n.id && <button className="note-reply-btn" onClick={(e) => { e.stopPropagation(); setReplyingTo(replyingTo === n.id ? null : n.id); setReplyText(''); }}>Reply{n.replies?.length ? ` (${n.replies.length})` : ''}</button>}
                 </div>
               </div>
-              {n.annotationThumb && (
-                <img src={n.annotationThumb} alt="annotation" className="note-annotation-thumb" />
+
+              {/* Replies */}
+              {(n.replies?.length > 0 || replyingTo === n.id) && (
+                <div className="note-replies">
+                  {(n.replies || []).map((r, ri) => (
+                    <div key={r.id || ri} className="note-reply">
+                      <div className="note-reply-author">{r.author}</div>
+                      <div className="note-reply-text">{r.text}</div>
+                      <div className="note-reply-time">{r.time}</div>
+                    </div>
+                  ))}
+                  {replyingTo === n.id && (
+                    <div className="note-reply-input-row">
+                      <textarea className="note-reply-input" placeholder="Write a reply..." value={replyText} onChange={e => setReplyText(e.target.value)} rows={1} autoFocus />
+                      <button className="note-reply-send" onClick={() => sendReply(n)} disabled={!replyText.trim()}>&#8593;</button>
+                    </div>
+                  )}
+                </div>
               )}
-              <div className="note-text">{n.text}</div>
-              <div className="note-time">{n.time}</div>
             </div>
           ))}
-          <div className="note-input-row">
-            <textarea
-              className="note-input"
-              placeholder="Add a note..."
-              value={noteText}
-              onChange={e => setNoteText(e.target.value)}
-              rows={1}
-            />
-            <button className="send-btn" onClick={sendNote}>&#8593;</button>
+
+          {/* Category picker */}
+          {categories.length > 0 && (
+            <div className="note-cat-row">
+              {categories.map(c => (
+                <button key={c.id} className={`note-cat-chip ${selectedCategory === c.id ? 'active' : ''}`}
+                  onClick={() => setSelectedCategory(selectedCategory === c.id ? null : c.id)}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Note input with @mention dropdown */}
+          <div style={{ position: 'relative' }}>
+            {mentionResults.length > 0 && (
+              <div className="mention-dropdown">
+                {mentionResults.map(m => (
+                  <div key={m.id} className="mention-item" onClick={() => insertMention(m)}>
+                    <div className="avatar" style={{ width: 24, height: 24, fontSize: 10 }}>{(m.first_name || '?')[0]}</div>
+                    <div>
+                      <span className="mention-item-name">{[m.first_name, m.last_name].filter(Boolean).join(' ')}</span>
+                      <span className="mention-item-user"> {m.username}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="note-input-row">
+              <textarea
+                ref={noteInputRef}
+                className="note-input"
+                placeholder="Add a note... (use @ to mention)"
+                value={noteText}
+                onChange={handleNoteInput}
+                rows={1}
+              />
+              <button className="send-btn" onClick={sendNote}>&#8593;</button>
+            </div>
           </div>
         </div>
       </div>
