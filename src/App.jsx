@@ -1026,7 +1026,9 @@ function ReviewsTab({ userInitial }) {
   const [addedIds, setAddedIds] = useState(new Set());
   // Project filter
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    try { return sessionStorage.getItem('ftrack_reviews_project') || ''; } catch { return ''; }
+  });
   // Search & sort
   const [reviewSearch, setReviewSearch] = useState('');
   const [sortOrder, setSortOrder] = useState('newest');
@@ -1073,6 +1075,11 @@ function ReviewsTab({ userInitial }) {
     fetchProjects().then(setProjects).catch(() => {});
     fetchStatuses().then(s => setStatuses(s.map(st => ({ ...st, color: normalizeColor(st.color) })))).catch(() => {});
   }, []);
+
+  // Persist selected project
+  useEffect(() => {
+    try { sessionStorage.setItem('ftrack_reviews_project', selectedProjectId); } catch {}
+  }, [selectedProjectId]);
 
   // Load reviews (filtered by project when selected)
   useEffect(() => {
@@ -1778,7 +1785,9 @@ function ReviewsTab({ userInitial }) {
 // ─── Shots Tab ────────────────────────────────────────────────────────────────
 function ShotsTab() {
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(() => {
+    try { return sessionStorage.getItem('ftrack_shots_project') || null; } catch { return null; }
+  });
   const [shots, setShots] = useState([]);
   const [statuses, setStatuses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1818,7 +1827,11 @@ function ShotsTab() {
     fetchProjects()
       .then(projs => {
         setProjects(projs);
-        if (projs.length > 0) setSelectedProjectId(projs[0].id);
+        // Restore saved project or default to first
+        const saved = sessionStorage.getItem('ftrack_shots_project');
+        const match = saved && projs.find(p => p.id === saved);
+        if (match) setSelectedProjectId(match.id);
+        else if (projs.length > 0) setSelectedProjectId(projs[0].id);
       })
       .catch(err => { console.error('[ShotsTab] Projects error:', err); setError(err.message); })
       .finally(checkDone);
@@ -1830,6 +1843,13 @@ function ShotsTab() {
       .catch(err => console.error('[ShotsTab] Statuses error:', err))
       .finally(checkDone);
   }, []);
+
+  // Persist selected project
+  useEffect(() => {
+    if (selectedProjectId) {
+      try { sessionStorage.setItem('ftrack_shots_project', selectedProjectId); } catch {}
+    }
+  }, [selectedProjectId]);
 
   // Load shots, shot-specific statuses, and project members when project changes
   useEffect(() => {
@@ -2905,8 +2925,15 @@ function ChatTab() {
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [auth, setAuth] = useState(null);
-  const [tab, setTab] = useState("reviews");
+  const [tab, setTab] = useState(() => {
+    try { return sessionStorage.getItem('ftrack_tab') || 'reviews'; } catch { return 'reviews'; }
+  });
   const [restoring, setRestoring] = useState(true);
+
+  // Persist active tab
+  useEffect(() => {
+    try { sessionStorage.setItem('ftrack_tab', tab); } catch {}
+  }, [tab]);
 
   // Restore saved session on mount
   useEffect(() => {
