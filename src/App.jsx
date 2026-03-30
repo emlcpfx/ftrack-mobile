@@ -129,6 +129,8 @@ const css = `
   .shot-name-lg { font-size:14px; font-weight:600; }
   .shot-version { font-size:12px; color:var(--muted); margin-top:2px; }
   .status-pill { border-radius:4px; padding:3px 8px; font-size:11px; font-weight:600; letter-spacing:.3px; white-space:nowrap; }
+  .status-pill-clickable { transition: opacity .15s; -webkit-tap-highlight-color: transparent; }
+  .status-pill-clickable:active { opacity: .6; }
 
   /* ── Player ── */
   .player-screen { position:absolute; inset:0; background:var(--bg); z-index:200; display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom); }
@@ -391,14 +393,15 @@ const css = `
 `;
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
-function StatusPill({ status, small }) {
+function StatusPill({ status, small, onClick }) {
   const color = normalizeColor(status?.color);
   return (
-    <span className="status-pill" style={{
+    <span className={`status-pill${onClick ? ' status-pill-clickable' : ''}`} style={{
       background: color + "22",
       color: color,
       fontSize: small ? "10px" : undefined,
-    }}>
+      cursor: onClick ? 'pointer' : undefined,
+    }} onClick={onClick}>
       <span className="status-dot" style={{ background: color }} />
       {status?.name || 'Unknown'}
     </span>
@@ -832,8 +835,8 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
               disabled={shots.findIndex(s => s.id === shot.id) === shots.length - 1}>&#9654;</button>
           </div>
         )}
-        <div onClick={() => setStatusPicker(true)} style={{ cursor: 'pointer' }}>
-          <StatusPill status={currentStatus} small />
+        <div>
+          <StatusPill status={currentStatus} small onClick={() => setStatusPicker(true)} />
         </div>
       </div>
 
@@ -881,14 +884,8 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
 
       <div className="player-body">
         {/* Status */}
-        <div style={{ padding: '14px 16px 0', display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <StatusPill status={currentStatus} />
-          </div>
-          {(shot.taskId || shot.versionId) && (
-            <button className="action-btn" style={{ flex: 0, whiteSpace: 'nowrap', padding: '8px 16px' }}
-              onClick={() => setStatusPicker(true)}>Change Status</button>
-          )}
+        <div style={{ padding: '14px 16px 0' }}>
+          <StatusPill status={currentStatus} onClick={(shot.taskId || shot.versionId) ? () => setStatusPicker(true) : undefined} />
         </div>
 
         {/* Notes */}
@@ -1546,7 +1543,7 @@ function ReviewsTab({ userInitial }) {
                       <div className="shot-name-lg">{shot.name}{shot.taskType ? ` / ${shot.taskType}` : ''}</div>
                       <div className="shot-version">v{shot.versionNum}{shot.artist ? ` \u00B7 ${shot.artist}` : ''}</div>
                     </div>
-                    <StatusPill status={shot.status} small />
+                    <StatusPill status={shot.status} small onClick={(e) => { e.stopPropagation(); openPlayer(shot); }} />
                   </div>
                 </div>
               </div>
@@ -2451,12 +2448,8 @@ function ShotsTab() {
         }
         <div className="shot-detail-meta">
           <div className="shot-detail-name">{detailShot.name}</div>
-          <StatusPill status={detailShot.status} />
+          <StatusPill status={detailShot.status} onClick={() => setStatusModal("shot-status")} />
         </div>
-      </div>
-
-      <div className="shot-detail-actions">
-        <button className="action-btn" onClick={() => setStatusModal("shot-status")}>Change Status</button>
       </div>
 
       <div className="scroll">
@@ -2472,8 +2465,8 @@ function ShotsTab() {
               <div className="version-label">Version {ver.version}</div>
               <div className="version-meta">{[ver.artist, ver.date].filter(Boolean).join(' \u00B7 ')}</div>
             </div>
-            <div className="version-status">
-              <StatusPill status={ver.status} small />
+            <div className="version-status" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()}>
+              <StatusPill status={ver.status} small onClick={(e) => { e.stopPropagation(); setStatusModal("shot-status"); }} />
             </div>
           </div>
         ))}
@@ -2598,8 +2591,8 @@ function ShotsTab() {
               {shot.artist && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{shot.artist}</div>}
               {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7, lineHeight: 1.4 }}>{shot.description}</div>}
             </div>
-            <div className="shot-list-status" onClick={(e) => { e.stopPropagation(); setDetailShot(shot); setStatusModal("shot-status"); }} onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} style={{ cursor: 'pointer', flexShrink: 0, padding: '8px 0 8px 8px' }}>
-              <StatusPill status={shot.status} small />
+            <div className="shot-list-status" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} style={{ flexShrink: 0, padding: '8px 0 8px 8px' }}>
+              <StatusPill status={shot.status} small onClick={(e) => { e.stopPropagation(); setDetailShot(shot); setStatusModal("shot-status"); }} />
             </div>
           </div>
         ))}
