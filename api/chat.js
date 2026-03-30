@@ -323,7 +323,7 @@ async function callClaude(apiKey, messages, tools) {
     const body = {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: allMessages,
       tools: claudeTools,
     };
@@ -380,7 +380,7 @@ async function callClaude(apiKey, messages, tools) {
   return 'I reached the maximum number of steps. Please try a more specific request.';
 }
 
-async function callClaudeWithClient(apiKey, messages, client) {
+async function callClaudeWithClient(apiKey, messages, client, systemPrompt = SYSTEM_PROMPT) {
   const claudeTools = TOOLS.map(t => ({
     name: t.name,
     description: t.description,
@@ -399,7 +399,7 @@ async function callClaudeWithClient(apiKey, messages, client) {
     const body = {
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 4096,
-      system: SYSTEM_PROMPT,
+      system: systemPrompt,
       messages: allMessages,
       tools: claudeTools,
     };
@@ -453,7 +453,7 @@ async function callClaudeWithClient(apiKey, messages, client) {
 
 // ── Gemini API ──
 
-async function callGeminiWithClient(apiKey, messages, client) {
+async function callGeminiWithClient(apiKey, messages, client, systemPrompt = SYSTEM_PROMPT) {
   const geminiTools = [{
     functionDeclarations: TOOLS.map(t => ({
       name: t.name,
@@ -475,7 +475,7 @@ async function callGeminiWithClient(apiKey, messages, client) {
 
   for (let i = 0; i < maxIterations; i++) {
     const body = {
-      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      system_instruction: { parts: [{ text: systemPrompt }] },
       contents: geminiContents,
       tools: geminiTools,
     };
@@ -546,7 +546,7 @@ async function callGeminiWithClient(apiKey, messages, client) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('POST only');
 
-  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey } = req.body;
+  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey, projectId, projectName } = req.body;
 
   if (!messages || !provider || !llmApiKey) {
     return res.status(400).json({ error: 'Missing required fields: messages, provider, llmApiKey' });
@@ -555,14 +555,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing ftrack credentials' });
   }
 
+  // Build system prompt with project context
+  let systemPrompt = SYSTEM_PROMPT;
+  if (projectId && projectName) {
+    systemPrompt += `\n\nThe user is currently working in project "${projectName}" (ID: "${projectId}"). When they refer to tasks, shots, reviews, etc. without specifying a project, assume they mean this project. Always use this project_id for filtering unless they explicitly ask about a different project.`;
+  }
+
   try {
     const client = new FtrackClient(ftrackServer, ftrackUser, ftrackApiKey);
     let response;
 
     if (provider === 'claude') {
-      response = await callClaudeWithClient(llmApiKey, messages, client);
+      response = await callClaudeWithClient(llmApiKey, messages, client, systemPrompt);
     } else if (provider === 'gemini') {
-      response = await callGeminiWithClient(llmApiKey, messages, client);
+      response = await callGeminiWithClient(llmApiKey, messages, client, systemPrompt);
     } else {
       return res.status(400).json({ error: `Unknown provider: ${provider}` });
     }

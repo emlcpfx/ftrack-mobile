@@ -1618,11 +1618,22 @@ function ChatTab() {
   const [llmSettings, setLlmSettings] = useState(getLlmSettings);
   const [settingsProvider, setSettingsProvider] = useState(llmSettings?.provider || 'gemini');
   const [settingsKey, setSettingsKey] = useState(llmSettings?.apiKey || '');
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const scrollRef = useRef(null);
   // Conversation history for the LLM (role/content pairs)
   const conversationRef = useRef([]);
 
   const hasSettings = llmSettings?.provider && llmSettings?.apiKey;
+  const selectedProject = projects.find(p => p.id === selectedProjectId);
+
+  // Load projects
+  useEffect(() => {
+    fetchProjects().then(projs => {
+      setProjects(projs);
+      if (projs.length > 0) setSelectedProjectId(projs[0].id);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -1683,6 +1694,8 @@ function ChatTab() {
           ftrackServer: ftrackCreds.server,
           ftrackUser: ftrackCreds.user,
           ftrackApiKey: ftrackCreds.apiKey,
+          projectId: selectedProjectId || null,
+          projectName: selectedProject?.name || null,
         }),
       });
 
@@ -1787,6 +1800,20 @@ function ChatTab() {
           </button>
         </div>
       </div>
+      {/* Project selector */}
+      {projects.length > 0 && (
+        <div className="project-bar">
+          <select
+            className="project-picker"
+            value={selectedProjectId || ''}
+            onChange={e => { setSelectedProjectId(e.target.value); conversationRef.current = []; setMessages(prev => [...prev, { type: 'system', text: `Switched to project: ${projects.find(p => p.id === e.target.value)?.name}` }]); }}
+          >
+            {projects.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="chat-messages" ref={scrollRef}>
         {messages.map((msg, i) => (
           <div key={i} className={`chat-msg chat-msg--${msg.type}`}>
