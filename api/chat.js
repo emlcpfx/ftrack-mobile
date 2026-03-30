@@ -546,7 +546,7 @@ async function callGeminiWithClient(apiKey, messages, client, systemPrompt = SYS
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('POST only');
 
-  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey, projectId, projectName } = req.body;
+  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey, projectId, projectName, customPrompt } = req.body;
 
   if (!messages || !provider || !llmApiKey) {
     return res.status(400).json({ error: 'Missing required fields: messages, provider, llmApiKey' });
@@ -555,14 +555,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing ftrack credentials' });
   }
 
-  // Build system prompt with project context
-  let systemPrompt = SYSTEM_PROMPT;
-  if (projectId && projectName) {
-    systemPrompt += `\n\nThe user is currently working in project "${projectName}" (ID: "${projectId}"). When they refer to tasks, shots, reviews, etc. without specifying a project, assume they mean this project. Always use this project_id for filtering unless they explicitly ask about a different project.`;
-  }
-
   try {
     const client = new FtrackClient(ftrackServer, ftrackUser, ftrackApiKey);
+    let systemPrompt = SYSTEM_PROMPT;
+    if (projectId && projectName) {
+      systemPrompt += `\n\nThe user is currently working in project "${projectName}" (ID: "${projectId}"). When they refer to tasks, shots, reviews, etc. without specifying a project, assume they mean this project. Always use this project_id for filtering unless they explicitly ask about a different project.`;
+    }
+    if (customPrompt) {
+      systemPrompt += '\n\n--- User Custom Instructions ---\n' + customPrompt;
+    }
     let response;
 
     if (provider === 'claude') {

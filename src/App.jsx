@@ -1,15 +1,17 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   createSession,
-  fetchReviews, fetchReviewShots, fetchTaskStatusesByShots,
+  fetchReviews, fetchReviewShots, fetchReviewThumbnails, fetchTaskStatusesByShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
+  bulkUpdateTaskStatus, bulkUpdateVersionStatus,
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories, fetchNoteCounts,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
-  addVersionToReview, removeFromReview,
+  addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
+  getReviewUrl,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -313,6 +315,47 @@ const css = `
   .chat-typing span:nth-child(2) { animation-delay:.2s; }
   .chat-typing span:nth-child(3) { animation-delay:.4s; }
   @keyframes chatBounce { 0%{opacity:.3;transform:translateY(0)} 100%{opacity:1;transform:translateY(-4px)} }
+
+  /* ── Review Thumbnails ── */
+  .review-card-thumbs { display:flex; gap:4px; padding:0 16px 12px; }
+  .review-card-thumb { width:56px; height:32px; border-radius:4px; object-fit:cover; background:var(--card2); flex-shrink:0; }
+  .review-card-count { display:flex; align-items:center; justify-content:center; min-width:40px; height:32px; border-radius:4px; background:var(--card2); font-size:10px; color:var(--muted); flex-shrink:0; padding:0 6px; }
+
+  /* ── Create Review ── */
+  .create-review-btn { display:flex; align-items:center; justify-content:center; gap:6px; margin:0 16px 10px; padding:12px; background:var(--card); border:1px dashed var(--border); border-radius:12px; cursor:pointer; color:var(--accent); font-size:13px; font-weight:600; font-family:var(--font-body); }
+  .create-review-btn:active { background:var(--card2); }
+  .create-review-input { margin:0 16px 10px; display:flex; gap:8px; }
+  .create-review-input input { flex:1; }
+
+  /* ── Bulk Status Bar ── */
+  .review-bulk-bar { display:flex; align-items:center; gap:8px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .review-bulk-count { flex:1; font-size:13px; font-weight:600; color:var(--muted); }
+  .review-bulk-btn { border:1px solid; border-radius:6px; padding:6px 12px; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer; background:none; }
+  .review-bulk-btn--approve { border-color:var(--green); color:var(--green); }
+  .review-bulk-btn--approve:active { background:var(--green); color:#fff; }
+  .review-bulk-btn--reject { border-color:var(--red); color:var(--red); }
+  .review-bulk-btn--reject:active { background:var(--red); color:#fff; }
+  .review-bulk-btn--status { border-color:var(--accent); color:var(--accent); }
+  .review-bulk-btn--status:active { background:var(--accent); color:#fff; }
+
+  /* ── Share Modal ── */
+  .share-url-row { display:flex; gap:8px; align-items:center; padding:16px 20px; }
+  .share-url-input { flex:1; background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:10px 12px; font-family:var(--font-body); font-size:12px; color:var(--text); outline:none; }
+  .share-copy-btn { background:var(--accent); border:none; border-radius:8px; padding:10px 14px; font-size:12px; font-weight:600; color:#fff; cursor:pointer; font-family:var(--font-body); white-space:nowrap; }
+  .share-copy-btn:active { opacity:.8; }
+
+  /* ── Reviews search ── */
+  .reviews-toolbar { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; gap:8px; }
+  .reviews-sort-btn { background:var(--bg); border:1px solid var(--border); border-radius:8px; padding:9px 12px; font-size:12px; cursor:pointer; color:var(--text); font-family:var(--font-body); white-space:nowrap; }
+  .reviews-sort-btn:active { border-color:var(--accent); }
+
+  /* ── Notes badge ── */
+  .notes-badge { position:absolute; top:2px; right:2px; background:var(--blue); border-radius:8px; padding:1px 5px; font-size:9px; font-weight:700; color:#fff; min-width:16px; text-align:center; }
+
+  /* ── Transfer destination ── */
+  .transfer-dest-row { display:flex; gap:8px; padding:8px 20px; border-bottom:1px solid var(--border); }
+  .transfer-dest-btn { flex:1; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--card); font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--muted); cursor:pointer; text-align:center; }
+  .transfer-dest-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(199,125,186,.08); }
 
   /* ── Misc ── */
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:var(--muted); gap:12px; }
@@ -802,6 +845,7 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
 // ─── Reviews Tab ──────────────────────────────────────────────────────────────
 function ReviewsTab({ userInitial }) {
   const [reviews, setReviews] = useState([]);
+  const [reviewThumbs, setReviewThumbs] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [detail, setDetail] = useState(null);
@@ -820,21 +864,51 @@ function ReviewsTab({ userInitial }) {
   // Project filter
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
+  // Search & sort
+  const [reviewSearch, setReviewSearch] = useState('');
+  const [sortOrder, setSortOrder] = useState('newest');
+  // Create review
+  const [creating, setCreating] = useState(false);
+  const [newReviewName, setNewReviewName] = useState('');
+  // Share modal
+  const [shareModal, setShareModal] = useState(null);
+  // Bulk status in review detail
+  const [bulkSelected, setBulkSelected] = useState(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkStatusPicker, setBulkStatusPicker] = useState(false);
+  const [statuses, setStatuses] = useState([]);
+  // Note counts for badge
+  const [noteCountMap, setNoteCountMap] = useState({});
   // Transfer feedback modal
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferItems, setTransferItems] = useState([]);
   const [transferSelected, setTransferSelected] = useState(new Set());
   const [transferNotesByVersion, setTransferNotesByVersion] = useState({});
   const [transferExpanded, setTransferExpanded] = useState(new Set());
+  const [transferDest, setTransferDest] = useState('task');
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [transferProgress, setTransferProgress] = useState('');
+  // Transfer history
+  const [transferredReviews, setTransferredReviews] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('transferred_reviews') || '[]')); } catch { return new Set(); }
+  });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
-  // Load projects on mount
+  const markTransferred = (reviewId) => {
+    setTransferredReviews(prev => {
+      const next = new Set(prev);
+      next.add(reviewId);
+      localStorage.setItem('transferred_reviews', JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  // Load projects and statuses on mount
   useEffect(() => {
     fetchProjects().then(setProjects).catch(() => {});
+    fetchStatuses().then(s => setStatuses(s.map(st => ({ ...st, color: normalizeColor(st.color) })))).catch(() => {});
   }, []);
 
   // Load reviews (filtered by project when selected)
@@ -842,7 +916,15 @@ function ReviewsTab({ userInitial }) {
     setLoading(true);
     setError("");
     fetchReviews(selectedProjectId || undefined)
-      .then(setReviews)
+      .then(revs => {
+        setReviews(revs);
+        // Fetch thumbnails for review cards
+        if (revs.length > 0) {
+          fetchReviewThumbnails(revs.map(r => r.id))
+            .then(setReviewThumbs)
+            .catch(() => {});
+        }
+      })
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
   }, [selectedProjectId]);
@@ -851,8 +933,9 @@ function ReviewsTab({ userInitial }) {
   useEffect(() => {
     const onPopState = (e) => {
       if (addMode) { setAddMode(false); return; }
+      if (bulkStatusPicker) { setBulkStatusPicker(false); return; }
       if (player) { setPlayer(null); }
-      else if (detail) { setDetail(null); setDetailShots([]); setEditMode(false); }
+      else if (detail) { setDetail(null); setDetailShots([]); setEditMode(false); setBulkMode(false); setBulkSelected(new Set()); }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -883,8 +966,20 @@ function ReviewsTab({ userInitial }) {
           versionId: rso.asset_version?.id,
           taskId: task?.id || null,
           taskType: task?.type?.name || '',
+          shotId: rso.asset_version?.asset?.parent?.id || null,
         };
       }));
+      // Fetch note counts for badges
+      const vIds = rsos.map(r => r.asset_version?.id).filter(Boolean);
+      if (vIds.length) {
+        fetchNoteCounts(vIds).then(byParent => {
+          const counts = {};
+          for (const [pid, notes] of Object.entries(byParent)) {
+            counts[pid] = notes.length;
+          }
+          setNoteCountMap(counts);
+        }).catch(() => {});
+      }
     } catch (err) {
       setError(err.message);
     } finally {
@@ -895,6 +990,8 @@ function ReviewsTab({ userInitial }) {
   const openDetail = async (review) => {
     history.pushState({ view: "detail" }, "");
     setDetail(review);
+    setBulkMode(false);
+    setBulkSelected(new Set());
     await loadDetail(review);
   };
 
@@ -904,6 +1001,68 @@ function ReviewsTab({ userInitial }) {
   };
 
   const closePlayer = () => setPlayer(null);
+
+  // ── Create review session ──
+  const handleCreateReview = async () => {
+    if (!newReviewName.trim()) return;
+    try {
+      const result = await createReviewSession(newReviewName.trim());
+      const newReview = { id: result.data?.id || result.id, name: newReviewName.trim(), created_at: new Date().toISOString() };
+      setReviews(prev => [newReview, ...prev]);
+      setNewReviewName('');
+      setCreating(false);
+      showToast('Review created');
+    } catch (err) {
+      showToast('Create failed: ' + (err.message || err));
+    }
+  };
+
+  // ── Share review ──
+  const handleShare = (review) => {
+    const url = getReviewUrl(review.id);
+    setShareModal({ review, url });
+  };
+
+  const copyShareUrl = async () => {
+    if (!shareModal?.url) return;
+    try {
+      await navigator.clipboard.writeText(shareModal.url);
+      showToast('Link copied!');
+    } catch {
+      // Fallback for iOS
+      const input = document.querySelector('.share-url-input');
+      if (input) { input.select(); document.execCommand('copy'); showToast('Link copied!'); }
+    }
+  };
+
+  // ── Bulk status in review detail ──
+  const toggleBulkItem = (id) => {
+    setBulkSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const bulkSelectAll = () => setBulkSelected(new Set(detailShots.map(s => s.id)));
+
+  const handleBulkStatus = async (statusId, statusName, statusColor) => {
+    const selected = detailShots.filter(s => bulkSelected.has(s.id));
+    const taskIds = selected.map(s => s.taskId).filter(Boolean);
+    const versionIds = selected.filter(s => !s.taskId && s.versionId).map(s => s.versionId);
+    try {
+      if (taskIds.length) await bulkUpdateTaskStatus(taskIds, statusId);
+      if (versionIds.length) await bulkUpdateVersionStatus(versionIds, statusId);
+      const newStatus = { id: statusId, name: statusName, color: normalizeColor(statusColor) };
+      setDetailShots(prev => prev.map(s => bulkSelected.has(s.id) ? { ...s, status: newStatus } : s));
+      showToast(`${selected.length} items → ${statusName}`);
+      setBulkSelected(new Set());
+      setBulkMode(false);
+      setBulkStatusPicker(false);
+    } catch (err) {
+      showToast('Status update failed');
+    }
+  };
 
   const closeDetail = () => {
     setDetail(null);
@@ -1053,12 +1212,17 @@ function ReviewsTab({ userInitial }) {
         const item = selected[i];
         setTransferProgress(`Transferring ${i + 1}/${selected.length}: ${item.name}...`);
         const editedNotes = transferNotesByVersion[item.versionId] || [];
-        const count = await transferEditedNotes(editedNotes, item.taskId, 'Task');
+        const targetId = transferDest === 'shot' ? item.shotId : item.taskId;
+        const targetType = transferDest === 'shot' ? 'Shot' : 'Task';
+        if (!targetId) continue;
+        const count = await transferEditedNotes(editedNotes, targetId, targetType);
         totalTransferred += count;
       }
       setTransferProgress('');
       setTransferModalOpen(false);
-      showToast(`Transferred ${totalTransferred} note${totalTransferred !== 1 ? 's' : ''} to ${selected.length} task${selected.length !== 1 ? 's' : ''}`);
+      if (detail) markTransferred(detail.id);
+      const dest = transferDest === 'shot' ? 'shots' : 'tasks';
+      showToast(`Transferred ${totalTransferred} note${totalTransferred !== 1 ? 's' : ''} to ${selected.length} ${dest}`);
     } catch (err) {
       showToast("Transfer failed: " + (err.message || err));
     } finally {
@@ -1069,6 +1233,24 @@ function ReviewsTab({ userInitial }) {
   if (player) return <PlayerScreen shot={player} onClose={closePlayer} shots={detailShots} onSwitch={setPlayer} onStatusChange={(shotId, newStatus) => {
     setDetailShots(prev => prev.map(s => s.id === shotId ? { ...s, status: newStatus } : s));
   }} />;
+
+  // ── Bulk status picker ──
+  if (bulkStatusPicker) return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <div className="header">
+        <div className="back-btn" onClick={() => setBulkStatusPicker(false)}>&#8592; Back</div>
+        <div className="header-title" style={{ fontSize: 15 }}>Set Status ({bulkSelected.size} items)</div>
+      </div>
+      <div className="scroll">
+        {statuses.map(s => (
+          <div key={s.id} className="shot-list-item" onClick={() => handleBulkStatus(s.id, s.name, s.color)}>
+            <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+            <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 
   // ── Add-to-review search view ──
   if (addMode) return (
@@ -1119,10 +1301,16 @@ function ReviewsTab({ userInitial }) {
         <div className="back-btn" onClick={closeDetail}>&#8592; Reviews</div>
         <div className="header-title" style={{ fontSize: 15, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{detail.name}</div>
         <div className="header-right">
+          <button className="edit-btn" onClick={() => handleShare(detail)} style={{ fontSize: 14, padding: '4px 8px' }}>&#128279;</button>
           {editMode ? (
             <button className="edit-btn edit-btn--accent" onClick={() => setEditMode(false)}>Done</button>
+          ) : bulkMode ? (
+            <button className="edit-btn edit-btn--accent" onClick={() => { setBulkMode(false); setBulkSelected(new Set()); }}>Done</button>
           ) : (
-            <button className="edit-btn" onClick={() => setEditMode(true)}>Edit</button>
+            <>
+              <button className="edit-btn" onClick={() => setBulkMode(true)}>Select</button>
+              <button className="edit-btn" onClick={() => setEditMode(true)}>Edit</button>
+            </>
           )}
         </div>
       </div>
@@ -1135,6 +1323,17 @@ function ReviewsTab({ userInitial }) {
         </div>
       )}
 
+      {/* Bulk status bar */}
+      {bulkMode && (
+        <div className="review-bulk-bar">
+          <div className="review-bulk-count">{bulkSelected.size} selected</div>
+          <button className="edit-btn" onClick={bulkSelectAll} style={{ fontSize: 11 }}>All</button>
+          {bulkSelected.size > 0 && (
+            <button className="review-bulk-btn review-bulk-btn--status" onClick={() => { history.pushState({ view: "bulkstatus" }, ""); setBulkStatusPicker(true); }}>Status</button>
+          )}
+        </div>
+      )}
+
       <div className="scroll">
         {detailLoading ? (
           <div className="loading">Loading shots...</div>
@@ -1143,9 +1342,12 @@ function ReviewsTab({ userInitial }) {
         ) : (
           <>
             {/* Transfer feedback button */}
-            {!editMode && detailShots.some(s => s.taskId && s.versionId) && (
-              <div className="transfer-btn" onClick={openTransferModal}>
-                &#128228; Transfer feedback to tasks
+            {!editMode && !bulkMode && detailShots.some(s => s.versionId) && (
+              <div className="transfer-btn" onClick={openTransferModal} style={{ position: 'relative' }}>
+                &#128228; Transfer feedback
+                {transferredReviews.has(detail.id) && (
+                  <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--green)', fontWeight: 600 }}>&#10003; Transferred</span>
+                )}
               </div>
             )}
 
@@ -1158,11 +1360,21 @@ function ReviewsTab({ userInitial }) {
                       &#9866;
                     </div>
                   )}
-                  <div className="shot-row-inner" style={{ flex: 1 }} onClick={() => !editMode && openPlayer(shot)}>
-                    <div className="shot-thumb-sm">
+                  {bulkMode && (
+                    <div style={{ padding: '10px 8px 10px 12px', cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); toggleBulkItem(shot.id); }}>
+                      <div className={`select-circle ${bulkSelected.has(shot.id) ? 'checked' : ''}`}>
+                        {bulkSelected.has(shot.id) && <span style={{ fontSize: 12, color: '#fff' }}>&#10003;</span>}
+                      </div>
+                    </div>
+                  )}
+                  <div className="shot-row-inner" style={{ flex: 1 }} onClick={() => bulkMode ? toggleBulkItem(shot.id) : (!editMode && openPlayer(shot))}>
+                    <div className="shot-thumb-sm" style={{ position: 'relative' }}>
                       {shot.thumb
                         ? <img src={shot.thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 8 }} />
                         : "\uD83C\uDFAC"}
+                      {noteCountMap[shot.versionId] > 0 && (
+                        <div className="notes-badge">{noteCountMap[shot.versionId]}</div>
+                      )}
                     </div>
                     <div className="shot-info">
                       <div className="shot-name-lg">{shot.name}{shot.taskType ? ` / ${shot.taskType}` : ''}</div>
@@ -1177,6 +1389,30 @@ function ReviewsTab({ userInitial }) {
         )}
       </div>
 
+      {/* Share Modal */}
+      {shareModal && (
+        <div className="modal-overlay" onClick={() => setShareModal(null)}>
+          <div className="modal-sheet" onClick={e => e.stopPropagation()} style={{ paddingTop: 0 }}>
+            <div className="modal-handle" style={{ marginTop: 12 }} />
+            <div className="modal-title">Share Review</div>
+            <div style={{ padding: '8px 20px', fontSize: 13, color: 'var(--muted)' }}>{shareModal.review.name}</div>
+            <div className="share-url-row">
+              <input className="share-url-input" value={shareModal.url || ''} readOnly onClick={e => e.target.select()} />
+              <button className="share-copy-btn" onClick={copyShareUrl}>Copy</button>
+            </div>
+            {navigator.share && (
+              <div style={{ padding: '0 20px 16px' }}>
+                <button className="btn-primary" style={{ width: '100%' }} onClick={() => {
+                  navigator.share({ title: shareModal.review.name, url: shareModal.url }).catch(() => {});
+                  setShareModal(null);
+                }}>Share via...</button>
+              </div>
+            )}
+            <button className="modal-cancel" onClick={() => setShareModal(null)}>Close</button>
+          </div>
+        </div>
+      )}
+
       {/* Transfer Feedback Modal */}
       {transferModalOpen && (
         <div className="modal-overlay" onClick={() => !transferring && setTransferModalOpen(false)}>
@@ -1190,7 +1426,11 @@ function ReviewsTab({ userInitial }) {
             ) : (
               <>
                 <div className="transfer-modal-info">
-                  <span>Select items to transfer notes from review versions to their linked tasks.</span>
+                  <span>Select items and edit notes before transferring.</span>
+                </div>
+                <div className="transfer-dest-row">
+                  <button className={`transfer-dest-btn ${transferDest === 'task' ? 'active' : ''}`} onClick={() => setTransferDest('task')}>To Tasks</button>
+                  <button className={`transfer-dest-btn ${transferDest === 'shot' ? 'active' : ''}`} onClick={() => setTransferDest('shot')}>To Shots</button>
                 </div>
                 <div className="transfer-select-all" onClick={toggleTransferAll}>
                   <div className={`select-circle ${transferSelected.size === transferItems.length ? 'checked' : ''}`}>
@@ -1285,8 +1525,18 @@ function ReviewsTab({ userInitial }) {
     </div>
   );
 
+  // Filter & sort reviews
+  const filteredReviews = reviews
+    .filter(r => !reviewSearch || r.name.toLowerCase().includes(reviewSearch.toLowerCase()))
+    .sort((a, b) => {
+      if (sortOrder === 'oldest') return new Date(a.created_at) - new Date(b.created_at);
+      if (sortOrder === 'name') return (a.name || '').localeCompare(b.name || '');
+      return new Date(b.created_at) - new Date(a.created_at); // newest
+    });
+
   return (
     <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+      <Toast msg={toast} />
       <div className="header">
         <BrandLogo />
         <div className="header-right">
@@ -1308,26 +1558,55 @@ function ReviewsTab({ userInitial }) {
           </select>
         </div>
       )}
+      {/* Search & sort */}
+      <div className="reviews-toolbar">
+        <input className="search-input" placeholder="Search reviews..." value={reviewSearch} onChange={e => setReviewSearch(e.target.value)} />
+        <button className="reviews-sort-btn" onClick={() => setSortOrder(s => s === 'newest' ? 'oldest' : s === 'oldest' ? 'name' : 'newest')}>
+          {sortOrder === 'newest' ? 'Newest' : sortOrder === 'oldest' ? 'Oldest' : 'A-Z'}
+        </button>
+      </div>
       <div className="scroll">
-        <div className="section-label">Reviews{selectedProjectId ? '' : ' (all projects)'}</div>
+        {/* Create review */}
+        {creating ? (
+          <div className="create-review-input">
+            <input className="search-input" placeholder="Review name..." value={newReviewName} onChange={e => setNewReviewName(e.target.value)} autoFocus onKeyDown={e => { if (e.key === 'Enter') handleCreateReview(); }} />
+            <button className="edit-btn edit-btn--accent" onClick={handleCreateReview}>Create</button>
+            <button className="edit-btn" onClick={() => { setCreating(false); setNewReviewName(''); }}>Cancel</button>
+          </div>
+        ) : (
+          <div className="create-review-btn" onClick={() => setCreating(true)}>+ New Review Session</div>
+        )}
+
+        <div className="section-label">{filteredReviews.length} review{filteredReviews.length !== 1 ? 's' : ''}{selectedProjectId ? '' : ' (all projects)'}</div>
         {loading && <div className="loading">Loading reviews...</div>}
         {error && <div className="error-msg">{error}</div>}
-        {!loading && !error && reviews.length === 0 && (
+        {!loading && !error && filteredReviews.length === 0 && (
           <div className="empty">
             <div className="empty-icon">&#127916;</div>
-            <div className="empty-text">No review sessions found.</div>
+            <div className="empty-text">{reviewSearch ? 'No reviews match your search.' : 'No review sessions found.'}</div>
           </div>
         )}
-        {reviews.map(rev => (
-          <div key={rev.id} className="review-card" onClick={() => openDetail(rev)}>
-            <div className="review-card-inner">
-              <div className="review-name">{rev.name}</div>
-              <div className="review-meta">
-                <span className="review-date">{formatDate(rev.created_at)}</span>
+        {filteredReviews.map(rev => {
+          const thumbs = reviewThumbs[rev.id] || [];
+          return (
+            <div key={rev.id} className="review-card" onClick={() => openDetail(rev)}>
+              <div className="review-card-inner">
+                <div className="review-name">{rev.name}</div>
+                <div className="review-meta">
+                  <span className="review-date">{formatDate(rev.created_at)}</span>
+                  {transferredReviews.has(rev.id) && (
+                    <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 600 }}>&#10003; Transferred</span>
+                  )}
+                </div>
               </div>
+              {thumbs.length > 0 && (
+                <div className="review-card-thumbs">
+                  {thumbs.map((url, i) => <img key={i} className="review-card-thumb" src={url} alt="" />)}
+                </div>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -1852,8 +2131,28 @@ function getFtrackCreds() {
   } catch { return null; }
 }
 
+function getChatHistory() {
+  try { return JSON.parse(localStorage.getItem('chat_history') || '[]'); } catch { return []; }
+}
+
+function saveChatHistory(messages, conversation) {
+  try {
+    localStorage.setItem('chat_history', JSON.stringify(messages.slice(-100)));
+    localStorage.setItem('chat_conversation', JSON.stringify(conversation.slice(-50)));
+  } catch {}
+}
+
+function getChatConversation() {
+  try { return JSON.parse(localStorage.getItem('chat_conversation') || '[]'); } catch { return []; }
+}
+
+function getCustomPrompt() {
+  try { return localStorage.getItem('chat_custom_prompt') || ''; } catch { return ''; }
+}
+
 function ChatTab() {
-  const [messages, setMessages] = useState([]);
+  const savedMessages = getChatHistory();
+  const [messages, setMessages] = useState(savedMessages.length ? savedMessages : []);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -1862,9 +2161,11 @@ function ChatTab() {
   const [settingsKey, setSettingsKey] = useState(llmSettings?.apiKey || '');
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [customPrompt, setCustomPrompt] = useState(getCustomPrompt);
+  const [settingsPrompt, setSettingsPrompt] = useState(customPrompt);
   const scrollRef = useRef(null);
   // Conversation history for the LLM (role/content pairs)
-  const conversationRef = useRef([]);
+  const conversationRef = useRef(getChatConversation());
 
   const hasSettings = llmSettings?.provider && llmSettings?.apiKey;
   const selectedProject = projects.find(p => p.id === selectedProjectId);
@@ -1881,8 +2182,16 @@ function ChatTab() {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  // Show welcome message
+  // Persist messages when they change
   useEffect(() => {
+    if (messages.length > 0) {
+      saveChatHistory(messages, conversationRef.current);
+    }
+  }, [messages]);
+
+  // Show welcome message only if no saved history
+  useEffect(() => {
+    if (savedMessages.length > 0) return; // already have history
     if (!hasSettings) {
       setMessages([{ type: 'system', text: 'Set up your AI provider to get started. Tap the gear icon above.' }]);
     } else {
@@ -1906,10 +2215,23 @@ function ChatTab() {
     const settings = { provider: settingsProvider, apiKey: settingsKey.trim() };
     saveLlmSettings(settings);
     setLlmSettings(settings);
+    // Save custom prompt
+    const prompt = settingsPrompt.trim();
+    setCustomPrompt(prompt);
+    if (prompt) localStorage.setItem('chat_custom_prompt', prompt);
+    else localStorage.removeItem('chat_custom_prompt');
     setShowSettings(false);
     conversationRef.current = [];
     const providerName = settings.provider === 'claude' ? 'Claude Haiku' : 'Gemini Flash';
     setMessages([{ type: 'bot', text: `Connected to ${providerName}. I can manage your ftrack reviews, tasks, statuses, notes, and more. Just ask in plain English.` }]);
+  };
+
+  const clearChatHistory = () => {
+    conversationRef.current = [];
+    localStorage.removeItem('chat_history');
+    localStorage.removeItem('chat_conversation');
+    const providerName = llmSettings?.provider === 'claude' ? 'Claude Haiku' : 'Gemini Flash';
+    setMessages([{ type: 'bot', text: `Chat cleared. Connected to ${providerName}.` }]);
   };
 
   const handleSend = async () => {
@@ -1938,6 +2260,7 @@ function ChatTab() {
           ftrackApiKey: ftrackCreds.apiKey,
           projectId: selectedProjectId || null,
           projectName: selectedProject?.name || null,
+          customPrompt: customPrompt || undefined,
         }),
       });
 
@@ -2004,14 +2327,36 @@ function ChatTab() {
               : 'Get your key at aistudio.google.com. Uses Gemini 3.0 Flash (~$0.0001/msg).'}
           </div>
         </div>
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label>Custom Instructions (optional)</label>
+          <textarea
+            className="note-input"
+            placeholder="e.g. Always respond in bullet points. Focus on compositing tasks. Use my studio's status names..."
+            value={settingsPrompt}
+            onChange={e => setSettingsPrompt(e.target.value)}
+            rows={3}
+            style={{ resize: 'vertical', minHeight: 60 }}
+          />
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
+            Extra instructions appended to the AI's system prompt.
+          </div>
+        </div>
         <button className="btn-primary" onClick={handleSaveSettings} disabled={!settingsKey.trim()}
           style={{ width: '100%' }}>
           Save & Connect
         </button>
+        {hasSettings && (
+          <button className="modal-cancel" style={{ marginTop: 12, width: '100%' }} onClick={clearChatHistory}>
+            Clear Chat History
+          </button>
+        )}
         {llmSettings?.apiKey && (
           <button className="modal-cancel" style={{ marginTop: 12, width: '100%' }}
             onClick={() => {
               localStorage.removeItem('llm_settings');
+              localStorage.removeItem('chat_history');
+              localStorage.removeItem('chat_conversation');
+              localStorage.removeItem('chat_custom_prompt');
               setLlmSettings(null);
               setSettingsKey('');
               setShowSettings(false);
