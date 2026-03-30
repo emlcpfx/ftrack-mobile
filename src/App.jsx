@@ -8,9 +8,8 @@ import {
   createNote as apiCreateNote, fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
-  addVersionToReview, removeFromReview, createReviewSession,
-  searchVersionsForReview, fetchTasksByStatus, fetchLatestVersionForTask,
-  fetchLatestVersionForShot, transferNotes, searchReviews,
+  addVersionToReview, removeFromReview,
+  searchVersionsForReview, transferNotes,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1592,198 +1591,115 @@ function ShotsTab() {
 }
 
 // ─── Chat Tab ────────────────────────────────────────────────────────────────
+
+function getLlmSettings() {
+  try {
+    const raw = localStorage.getItem('llm_settings');
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveLlmSettings(settings) {
+  localStorage.setItem('llm_settings', JSON.stringify(settings));
+}
+
+function getFtrackCreds() {
+  try {
+    const raw = localStorage.getItem('ftrack_auth');
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
 function ChatTab() {
-  const [messages, setMessages] = useState([
-    { type: 'bot', text: 'Hey! I can help you manage reviews and tasks. Try things like:' },
-  ]);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [projects, setProjects] = useState([]);
-  const [reviews, setReviews] = useState([]);
+  const [showSettings, setShowSettings] = useState(false);
+  const [llmSettings, setLlmSettings] = useState(getLlmSettings);
+  const [settingsProvider, setSettingsProvider] = useState(llmSettings?.provider || 'gemini');
+  const [settingsKey, setSettingsKey] = useState(llmSettings?.apiKey || '');
   const scrollRef = useRef(null);
+  // Conversation history for the LLM (role/content pairs)
+  const conversationRef = useRef([]);
 
-  useEffect(() => {
-    fetchProjects().then(setProjects).catch(() => {});
-    fetchReviews().then(setReviews).catch(() => {});
-  }, []);
+  const hasSettings = llmSettings?.provider && llmSettings?.apiKey;
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
+  // Show welcome message
+  useEffect(() => {
+    if (!hasSettings) {
+      setMessages([{ type: 'system', text: 'Set up your AI provider to get started. Tap the gear icon above.' }]);
+    } else {
+      const providerName = llmSettings.provider === 'claude' ? 'Claude Haiku' : 'Gemini Flash';
+      setMessages([{ type: 'bot', text: `Connected to ${providerName}. I can manage your ftrack reviews, tasks, statuses, notes, and more. Just ask in plain English.` }]);
+    }
+  }, [hasSettings]);
+
   const suggestions = [
     'Put all "Client Review" tasks into a review',
-    'Create a new review session',
-    'Show tasks with status "In Progress"',
-    'Add shot ABC_010 to review "Dailies"',
+    'Create a new review session called "Dailies"',
+    'Show me tasks with status "In Progress"',
+    'List all review sessions',
+    'What projects do I have?',
   ];
 
   const addMsg = (type, text) => setMessages(prev => [...prev, { type, text }]);
 
-  const parseAndExecute = async (text) => {
-    const lower = text.toLowerCase().trim();
-
-    // ── Create review session ──
-    const createMatch = lower.match(/create\s+(?:a\s+)?(?:new\s+)?review\s+(?:session\s+)?(?:called|named)?\s*["""]?(.+?)["""]?\s*$/);
-    if (createMatch || lower.match(/create\s+(?:a\s+)?(?:new\s+)?review\b/)) {
-      const name = createMatch?.[1] || null;
-      if (!name) {
-        addMsg('bot', 'What would you like to name the review session? Say something like: **create review called "Dailies 03/30"**');
-        return;
-      }
-      addMsg('system', `Creating review "${name}"...`);
-      try {
-        const result = await createReviewSession(name);
-        setReviews(prev => [{ id: result.data.id, name, created_at: new Date().toISOString() }, ...prev]);
-        addMsg('bot', `Created review session **"${name}"**. You can now add items to it.`);
-      } catch (err) {
-        addMsg('error', `Failed: ${err.message}`);
-      }
-      return;
-    }
-
-    // ── Put tasks with status X into review Y ──
-    const putMatch = lower.match(/(?:put|add|move)\s+(?:all\s+|every\s+)?(?:tasks?|shots?|versions?)\s+(?:with\s+)?(?:(?:the\s+)?status\s+)?["""](.+?)["""]\s+(?:in(?:to)?|to)\s+(?:(?:the\s+)?review\s+)?["""](.+?)["""]/);
-    if (putMatch) {
-      const statusName = putMatch[1];
-      const reviewName = putMatch[2];
-      // Find the review
-      const review = reviews.find(r => r.name.toLowerCase().includes(reviewName.toLowerCase()));
-      if (!review) {
-        addMsg('bot', `I couldn't find a review matching **"${reviewName}"**. Available reviews:\n${reviews.slice(0, 10).map(r => `- ${r.name}`).join('\n')}`);
-        return;
-      }
-      if (projects.length === 0) {
-        addMsg('error', 'No projects loaded. Please try again.');
-        return;
-      }
-      addMsg('system', `Finding tasks with status "${statusName}"...`);
-      try {
-        let allTasks = [];
-        for (const proj of projects) {
-          const tasks = await fetchTasksByStatus(proj.id, statusName);
-          allTasks = allTasks.concat(tasks.map(t => ({ ...t, projectName: proj.name })));
-        }
-        if (allTasks.length === 0) {
-          addMsg('bot', `No tasks found with status **"${statusName}"** across your projects.`);
-          return;
-        }
-        addMsg('system', `Found ${allTasks.length} task${allTasks.length !== 1 ? 's' : ''}. Adding to "${review.name}"...`);
-        let added = 0, skipped = 0;
-        for (const task of allTasks) {
-          try {
-            const version = await fetchLatestVersionForTask(task.id);
-            if (!version) {
-              // Try parent shot
-              const shotVersion = task.parent?.id ? await fetchLatestVersionForShot(task.parent.id) : null;
-              if (shotVersion) {
-                await addVersionToReview(review.id, shotVersion.id, added);
-                added++;
-              } else {
-                skipped++;
-              }
-            } else {
-              await addVersionToReview(review.id, version.id, added);
-              added++;
-            }
-          } catch {
-            skipped++;
-          }
-        }
-        let msg = `Added **${added}** item${added !== 1 ? 's' : ''} to **"${review.name}"**`;
-        if (skipped > 0) msg += ` (${skipped} skipped — no published versions)`;
-        addMsg('bot', msg);
-      } catch (err) {
-        addMsg('error', `Failed: ${err.message}`);
-      }
-      return;
-    }
-
-    // ── Show tasks with status X ──
-    const showMatch = lower.match(/(?:show|list|find|get)\s+(?:all\s+)?(?:tasks?|shots?)\s+(?:with\s+)?(?:(?:the\s+)?status\s+)?["""](.+?)["""]/);
-    if (showMatch) {
-      const statusName = showMatch[1];
-      addMsg('system', `Searching for "${statusName}" tasks...`);
-      try {
-        let allTasks = [];
-        for (const proj of projects) {
-          const tasks = await fetchTasksByStatus(proj.id, statusName);
-          allTasks = allTasks.concat(tasks.map(t => ({ ...t, projectName: proj.name })));
-        }
-        if (allTasks.length === 0) {
-          addMsg('bot', `No tasks found with status **"${statusName}"**.`);
-        } else {
-          const lines = allTasks.slice(0, 30).map(t => {
-            const shotName = t.parent?.name || '';
-            return `- **${shotName}** / ${t.type?.name || t.name} (${t.projectName})`;
-          });
-          if (allTasks.length > 30) lines.push(`...and ${allTasks.length - 30} more`);
-          addMsg('bot', `Found **${allTasks.length}** task${allTasks.length !== 1 ? 's' : ''} with status "${statusName}":\n${lines.join('\n')}`);
-        }
-      } catch (err) {
-        addMsg('error', `Failed: ${err.message}`);
-      }
-      return;
-    }
-
-    // ── Add shot X to review Y ──
-    const addShotMatch = lower.match(/add\s+(?:shot\s+)?["""]?(\S+)["""]?\s+to\s+(?:(?:the\s+)?review\s+)?["""](.+?)["""]/);
-    if (addShotMatch) {
-      const shotSearch = addShotMatch[1];
-      const reviewName = addShotMatch[2];
-      const review = reviews.find(r => r.name.toLowerCase().includes(reviewName.toLowerCase()));
-      if (!review) {
-        addMsg('bot', `Review **"${reviewName}"** not found.`);
-        return;
-      }
-      addMsg('system', `Searching for "${shotSearch}"...`);
-      try {
-        const versions = await searchVersionsForReview(shotSearch);
-        if (versions.length === 0) {
-          addMsg('bot', `No versions found for **"${shotSearch}"**.`);
-          return;
-        }
-        // Use latest version of first match
-        const v = versions[0];
-        await addVersionToReview(review.id, v.id, 0);
-        addMsg('bot', `Added **${v.asset?.parent?.name || shotSearch}** v${v.version} to **"${review.name}"**`);
-      } catch (err) {
-        addMsg('error', `Failed: ${err.message}`);
-      }
-      return;
-    }
-
-    // ── List reviews ──
-    if (lower.match(/(?:list|show|get)\s+(?:all\s+)?reviews?/)) {
-      if (reviews.length === 0) {
-        addMsg('bot', 'No review sessions found.');
-      } else {
-        const lines = reviews.slice(0, 20).map(r => `- **${r.name}** (${formatDate(r.created_at)})`);
-        addMsg('bot', `Found **${reviews.length}** review${reviews.length !== 1 ? 's' : ''}:\n${lines.join('\n')}`);
-      }
-      return;
-    }
-
-    // ── Fallback ──
-    addMsg('bot', `I'm not sure how to do that. Here's what I can help with:\n\n- **"Put all \`Status Name\` tasks into review \`Review Name\`"**\n- **"Create review called \`Name\`"**\n- **"Show tasks with status \`Status Name\`"**\n- **"Add shot ABC_010 to review \`Review Name\`"**\n- **"List reviews"**\n\nMake sure to put status names and review names in quotes.`);
+  const handleSaveSettings = () => {
+    if (!settingsKey.trim()) return;
+    const settings = { provider: settingsProvider, apiKey: settingsKey.trim() };
+    saveLlmSettings(settings);
+    setLlmSettings(settings);
+    setShowSettings(false);
+    conversationRef.current = [];
+    const providerName = settings.provider === 'claude' ? 'Claude Haiku' : 'Gemini Flash';
+    setMessages([{ type: 'bot', text: `Connected to ${providerName}. I can manage your ftrack reviews, tasks, statuses, notes, and more. Just ask in plain English.` }]);
   };
 
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || processing) return;
+    if (!text || processing || !hasSettings) return;
     addMsg('user', text);
     setInput('');
     setProcessing(true);
+
+    // Add to conversation history
+    conversationRef.current.push({ role: 'user', content: text });
+
     try {
-      await parseAndExecute(text);
+      const ftrackCreds = getFtrackCreds();
+      if (!ftrackCreds) throw new Error('Not logged in to ftrack');
+
+      const resp = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: conversationRef.current,
+          provider: llmSettings.provider,
+          llmApiKey: llmSettings.apiKey,
+          ftrackServer: ftrackCreds.server,
+          ftrackUser: ftrackCreds.user,
+          ftrackApiKey: ftrackCreds.apiKey,
+        }),
+      });
+
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || 'Request failed');
+
+      const botText = data.response || 'Done.';
+      conversationRef.current.push({ role: 'assistant', content: botText });
+      addMsg('bot', botText);
     } catch (err) {
-      addMsg('error', `Something went wrong: ${err.message}`);
+      addMsg('error', err.message);
     } finally {
       setProcessing(false);
     }
   };
 
-  // Simple markdown-like rendering for bold
+  // Simple markdown rendering (bold, code, lists)
   const renderText = (text) => {
     const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
     return parts.map((part, i) => {
@@ -1797,11 +1713,79 @@ function ChatTab() {
     });
   };
 
+  // ── Settings screen ──
+  if (showSettings) return (
+    <div className="chat-container">
+      <div className="header">
+        <div className="back-btn" onClick={() => setShowSettings(false)}>&#8592; Back</div>
+        <div className="header-title" style={{ fontSize: 15 }}>AI Settings</div>
+      </div>
+      <div className="scroll" style={{ padding: 20 }}>
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label>AI Provider</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {[['gemini', 'Gemini Flash'], ['claude', 'Claude Haiku']].map(([val, label]) => (
+              <button key={val}
+                className={`edit-btn ${settingsProvider === val ? 'edit-btn--accent' : ''}`}
+                style={{ flex: 1, padding: '12px 8px', fontSize: 13 }}
+                onClick={() => setSettingsProvider(val)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="field" style={{ marginBottom: 16 }}>
+          <label>{settingsProvider === 'claude' ? 'Anthropic API Key' : 'Google AI API Key'}</label>
+          <input
+            type="password"
+            placeholder={settingsProvider === 'claude' ? 'sk-ant-...' : 'AIza...'}
+            value={settingsKey}
+            onChange={e => setSettingsKey(e.target.value)}
+            autoComplete="off"
+          />
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.5 }}>
+            {settingsProvider === 'claude'
+              ? 'Get your key at console.anthropic.com. Uses Haiku 4.5 (~$0.001/msg).'
+              : 'Get your key at aistudio.google.com. Uses Gemini 2.5 Flash (~$0.0001/msg).'}
+          </div>
+        </div>
+        <button className="btn-primary" onClick={handleSaveSettings} disabled={!settingsKey.trim()}
+          style={{ width: '100%' }}>
+          Save & Connect
+        </button>
+        {llmSettings?.apiKey && (
+          <button className="modal-cancel" style={{ marginTop: 12, width: '100%' }}
+            onClick={() => {
+              localStorage.removeItem('llm_settings');
+              setLlmSettings(null);
+              setSettingsKey('');
+              setShowSettings(false);
+              setMessages([{ type: 'system', text: 'AI disconnected. Tap the gear icon to set up a new provider.' }]);
+              conversationRef.current = [];
+            }}>
+            Disconnect AI
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── Main chat view ──
   return (
     <div className="chat-container">
       <div className="header">
         <BrandLogo />
         <div className="header-title" style={{ fontSize: 15 }}>Chat</div>
+        <div className="header-right">
+          {hasSettings && (
+            <span style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.5px' }}>
+              {llmSettings.provider === 'claude' ? 'Haiku' : 'Gemini'}
+            </span>
+          )}
+          <button className="edit-btn" onClick={() => setShowSettings(true)} style={{ fontSize: 16, padding: '4px 8px', lineHeight: 1 }}>
+            &#9881;
+          </button>
+        </div>
       </div>
       <div className="chat-messages" ref={scrollRef}>
         {messages.map((msg, i) => (
@@ -1817,23 +1801,24 @@ function ChatTab() {
           </div>
         )}
       </div>
-      {messages.length <= 2 && !processing && (
+      {messages.length <= 2 && hasSettings && !processing && (
         <div className="chat-suggestions">
           {suggestions.map((s, i) => (
-            <div key={i} className="chat-suggestion" onClick={() => { setInput(s); }}>{s}</div>
+            <div key={i} className="chat-suggestion" onClick={() => setInput(s)}>{s}</div>
           ))}
         </div>
       )}
       <div className="chat-input-row">
         <textarea
           className="chat-input"
-          placeholder="Tell me what to do..."
+          placeholder={hasSettings ? "Tell me what to do..." : "Set up AI provider first..."}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
           rows={1}
+          disabled={!hasSettings}
         />
-        <button className="chat-send" onClick={handleSend} disabled={processing || !input.trim()}>&#8593;</button>
+        <button className="chat-send" onClick={handleSend} disabled={processing || !input.trim() || !hasSettings}>&#8593;</button>
       </div>
     </div>
   );
