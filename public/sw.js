@@ -24,6 +24,44 @@ self.addEventListener('activate', (e) => {
   self.clients.claim();
 });
 
+// Push notification received
+self.addEventListener('push', (e) => {
+  let data = { title: 'ftrack', body: 'Status changed' };
+  try {
+    data = e.data.json();
+  } catch {}
+
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: data.icon || '/icons/icon.svg',
+      badge: data.badge || '/icons/icon.svg',
+      data: data.data || {},
+      vibrate: [200, 100, 200],
+      tag: 'ftrack-status-change',
+      renotify: true,
+    })
+  );
+});
+
+// Notification click — open the app
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const url = e.notification.data?.url || '/';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(clients => {
+      // Focus existing window if open
+      for (const client of clients) {
+        if (client.url.includes(self.location.origin) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open new window
+      return self.clients.openWindow(url);
+    })
+  );
+});
+
 // Fetch: network-first for API calls, cache-first for assets
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
