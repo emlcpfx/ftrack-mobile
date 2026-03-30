@@ -353,14 +353,19 @@ export async function fetchNoteCounts(parentIds) {
   if (!parentIds.length) return {};
   const s = getSession();
   const result = await s.query(
-    `select parent_id, id from Note
-     where parent_id in (${parentIds.map(id => `"${id}"`).join(',')})`
+    `select parent_id, id, content, date, frame_number,
+            author.first_name, author.last_name,
+            category.name
+     from Note
+     where parent_id in (${parentIds.map(id => `"${id}"`).join(',')})
+     order by date ascending`
   );
-  const counts = {};
+  const byParent = {};
   for (const note of result.data) {
-    counts[note.parent_id] = (counts[note.parent_id] || 0) + 1;
+    if (!byParent[note.parent_id]) byParent[note.parent_id] = [];
+    byParent[note.parent_id].push(note);
   }
-  return counts;
+  return byParent;
 }
 
 export async function deleteNote(noteId) {
@@ -460,6 +465,27 @@ export async function transferNotes(sourceId, targetId, targetType) {
   );
   let count = 0;
   for (const note of notes.data) {
+    const noteData = {
+      content: note.content,
+      parent_id: targetId,
+      parent_type: targetType,
+      is_todo: true,
+    };
+    if (_userId) noteData.user_id = _userId;
+    if (note.frame_number != null) noteData.frame_number = note.frame_number;
+    if (note.category_id) noteData.category_id = note.category_id;
+    await s.create('Note', noteData);
+    count++;
+  }
+  return count;
+}
+
+/** Transfer notes with edited content (notes pre-fetched and possibly modified by user) */
+export async function transferEditedNotes(notes, targetId, targetType) {
+  const s = getSession();
+  let count = 0;
+  for (const note of notes) {
+    if (!note.content || !note.content.trim()) continue;
     const noteData = {
       content: note.content,
       parent_id: targetId,

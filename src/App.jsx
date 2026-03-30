@@ -9,7 +9,7 @@ import {
   fetchNoteCategories, fetchNoteCounts,
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
   addVersionToReview, removeFromReview,
-  searchVersionsForReview, transferNotes,
+  searchVersionsForReview, transferNotes, transferEditedNotes,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -258,11 +258,22 @@ const css = `
   .transfer-select-all:active { background:var(--card); }
   .transfer-modal-list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; min-height:0; }
   .transfer-modal-list::-webkit-scrollbar { display:none; }
-  .transfer-modal-item { display:flex; align-items:center; gap:10px; padding:10px 20px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; }
+  .transfer-modal-item-wrap { border-bottom:1px solid var(--border); }
+  .transfer-modal-item-wrap.selected { background:rgba(199,125,186,.06); }
+  .transfer-modal-item { display:flex; align-items:center; gap:10px; padding:10px 20px; cursor:pointer; transition:background .15s; }
   .transfer-modal-item:active { background:var(--card); }
-  .transfer-modal-item.selected { background:rgba(199,125,186,.06); }
   .transfer-note-badge { font-size:11px; font-weight:600; padding:3px 8px; border-radius:10px; background:var(--card); color:var(--muted); white-space:nowrap; flex-shrink:0; }
   .transfer-note-badge.has-notes { background:rgba(33,150,243,.12); color:var(--blue); }
+  .transfer-notes-list { padding:0 20px 10px 52px; display:flex; flex-direction:column; gap:8px; }
+  .transfer-note-item { background:var(--card); border-radius:8px; padding:8px 10px; }
+  .transfer-note-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
+  .transfer-note-author { font-size:11px; font-weight:600; color:var(--accent); }
+  .transfer-note-cat { font-size:10px; background:rgba(33,150,243,.1); color:var(--blue); padding:1px 6px; border-radius:4px; }
+  .transfer-note-frame { font-size:10px; font-family:monospace; color:var(--accent2); background:rgba(199,125,186,.12); padding:1px 6px; border-radius:4px; }
+  .transfer-note-date { font-size:10px; color:var(--muted); margin-left:auto; }
+  .transfer-note-edit { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--font-body); font-size:12px; color:var(--text); outline:none; resize:vertical; min-height:40px; line-height:1.5; transition:border-color .2s; }
+  .transfer-note-edit:focus { border-color:var(--accent); }
+  .transfer-note-edit:disabled { opacity:.5; }
   .transfer-modal-actions { display:flex; gap:10px; padding:16px 20px; border-top:1px solid var(--border); padding-bottom:calc(16px + env(safe-area-inset-bottom)); }
 
   /* ── Add to Review Modal ── */
@@ -813,6 +824,8 @@ function ReviewsTab({ userInitial }) {
   const [transferModalOpen, setTransferModalOpen] = useState(false);
   const [transferItems, setTransferItems] = useState([]);
   const [transferSelected, setTransferSelected] = useState(new Set());
+  const [transferNotesByVersion, setTransferNotesByVersion] = useState({});
+  const [transferExpanded, setTransferExpanded] = useState(new Set());
   const [transferLoading, setTransferLoading] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [transferProgress, setTransferProgress] = useState('');
@@ -965,17 +978,30 @@ function ReviewsTab({ userInitial }) {
     setTransferModalOpen(true);
     setTransferLoading(true);
     setTransferProgress('');
+    setTransferExpanded(new Set());
     try {
-      // Build items with note counts
       const eligibleShots = detailShots.filter(s => s.versionId && s.taskId);
       const versionIds = eligibleShots.map(s => s.versionId);
-      const noteCounts = await fetchNoteCounts(versionIds);
+      const notesByParent = await fetchNoteCounts(versionIds);
+      // Store editable notes keyed by versionId
+      const editableNotes = {};
+      for (const [parentId, notes] of Object.entries(notesByParent)) {
+        editableNotes[parentId] = notes.map(n => ({
+          id: n.id,
+          content: n.content || '',
+          frame_number: n.frame_number,
+          category_id: n.category_id,
+          author: [n.author?.first_name, n.author?.last_name].filter(Boolean).join(' '),
+          date: n.date,
+          category: n.category?.name || '',
+        }));
+      }
+      setTransferNotesByVersion(editableNotes);
       const items = eligibleShots.map(s => ({
         ...s,
-        noteCount: noteCounts[s.versionId] || 0,
+        noteCount: (editableNotes[s.versionId] || []).length,
       }));
       setTransferItems(items);
-      // Pre-select items that have notes
       setTransferSelected(new Set(items.filter(i => i.noteCount > 0).map(i => i.id)));
     } catch (err) {
       showToast("Failed to load notes: " + (err.message || err));
@@ -1001,6 +1027,22 @@ function ReviewsTab({ userInitial }) {
     }
   };
 
+  const toggleTransferExpand = (id) => {
+    setTransferExpanded(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const updateTransferNote = (versionId, noteIndex, newContent) => {
+    setTransferNotesByVersion(prev => {
+      const notes = [...(prev[versionId] || [])];
+      notes[noteIndex] = { ...notes[noteIndex], content: newContent };
+      return { ...prev, [versionId]: notes };
+    });
+  };
+
   const executeTransfer = async () => {
     const selected = transferItems.filter(i => transferSelected.has(i.id));
     if (selected.length === 0) return;
@@ -1010,7 +1052,8 @@ function ReviewsTab({ userInitial }) {
       for (let i = 0; i < selected.length; i++) {
         const item = selected[i];
         setTransferProgress(`Transferring ${i + 1}/${selected.length}: ${item.name}...`);
-        const count = await transferNotes(item.versionId, item.taskId, 'Task');
+        const editedNotes = transferNotesByVersion[item.versionId] || [];
+        const count = await transferEditedNotes(editedNotes, item.taskId, 'Task');
         totalTransferred += count;
       }
       setTransferProgress('');
@@ -1161,23 +1204,59 @@ function ReviewsTab({ userInitial }) {
                   </span>
                 </div>
                 <div className="transfer-modal-list">
-                  {transferItems.map(item => (
-                    <div key={item.id} className={`transfer-modal-item ${transferSelected.has(item.id) ? 'selected' : ''}`} onClick={() => !transferring && toggleTransferItem(item.id)}>
-                      <div className={`select-circle ${transferSelected.has(item.id) ? 'checked' : ''}`}>
-                        {transferSelected.has(item.id) && <span style={{ fontSize: 11, color: '#fff' }}>&#10003;</span>}
+                  {transferItems.map(item => {
+                    const notes = transferNotesByVersion[item.versionId] || [];
+                    const isExpanded = transferExpanded.has(item.id);
+                    return (
+                      <div key={item.id} className={`transfer-modal-item-wrap ${transferSelected.has(item.id) ? 'selected' : ''}`}>
+                        <div className="transfer-modal-item" onClick={() => !transferring && toggleTransferItem(item.id)}>
+                          <div className={`select-circle ${transferSelected.has(item.id) ? 'checked' : ''}`}>
+                            {transferSelected.has(item.id) && <span style={{ fontSize: 11, color: '#fff' }}>&#10003;</span>}
+                          </div>
+                          <div className="shot-thumb-sm" style={{ width: 56, height: 32, borderRadius: 4, flexShrink: 0, overflow: 'hidden' }}>
+                            {item.thumb ? <img src={item.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}{item.taskType ? ` / ${item.taskType}` : ''}</div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>v{item.versionNum}{item.artist ? ` \u00B7 ${item.artist}` : ''}</div>
+                          </div>
+                          {notes.length > 0 && (
+                            <div
+                              className={`transfer-note-badge has-notes`}
+                              onClick={(e) => { e.stopPropagation(); toggleTransferExpand(item.id); }}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              {notes.length} {notes.length === 1 ? 'note' : 'notes'} {isExpanded ? '\u25B2' : '\u25BC'}
+                            </div>
+                          )}
+                          {notes.length === 0 && (
+                            <div className="transfer-note-badge">0 notes</div>
+                          )}
+                        </div>
+                        {isExpanded && notes.length > 0 && (
+                          <div className="transfer-notes-list">
+                            {notes.map((note, ni) => (
+                              <div key={note.id} className="transfer-note-item">
+                                <div className="transfer-note-meta">
+                                  <span className="transfer-note-author">{note.author}</span>
+                                  {note.category && <span className="transfer-note-cat">{note.category}</span>}
+                                  {note.frame_number != null && <span className="transfer-note-frame">f{note.frame_number}</span>}
+                                  <span className="transfer-note-date">{formatTime(note.date)}</span>
+                                </div>
+                                <textarea
+                                  className="transfer-note-edit"
+                                  value={note.content}
+                                  onChange={(e) => updateTransferNote(item.versionId, ni, e.target.value)}
+                                  disabled={transferring}
+                                  rows={Math.max(2, (note.content || '').split('\n').length)}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
-                      <div className="shot-thumb-sm" style={{ width: 56, height: 32, borderRadius: 4, flexShrink: 0, overflow: 'hidden' }}>
-                        {item.thumb ? <img src={item.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : null}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}{item.taskType ? ` / ${item.taskType}` : ''}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>v{item.versionNum}{item.artist ? ` \u00B7 ${item.artist}` : ''}</div>
-                      </div>
-                      <div className={`transfer-note-badge ${item.noteCount > 0 ? 'has-notes' : ''}`}>
-                        {item.noteCount} {item.noteCount === 1 ? 'note' : 'notes'}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {transferItems.length === 0 && (
                     <div className="empty" style={{ padding: '30px 20px' }}>
                       <div className="empty-text">No items with linked tasks to transfer feedback to.</div>
