@@ -1887,6 +1887,20 @@ function ShotsTab() {
           }
         }
         setShots(flat);
+        // Merge statuses found on actual tasks into the status list
+        // This ensures statuses like "QC Ready" appear in the filter
+        // even if fetchShotStatuses missed them
+        setStatuses(prev => {
+          const existing = new Set(prev.map(s => s.id));
+          const extra = [];
+          for (const item of flat) {
+            if (item.status?.id && !existing.has(item.status.id)) {
+              existing.add(item.status.id);
+              extra.push({ id: item.status.id, name: item.status.name, color: item.status.color });
+            }
+          }
+          return extra.length ? [...prev, ...extra] : prev;
+        });
       })
       .catch(err => setError(err.message))
       .finally(() => setShotsLoading(false));
