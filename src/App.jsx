@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   createSession,
   fetchReviews, fetchReviewShots, fetchReviewThumbnails, fetchTaskStatusesByShots,
@@ -13,6 +13,7 @@ import {
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
   getReviewUrl,
+  fetchCustomAttributeConfigs, fetchCustomAttributeValues,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1788,7 +1789,14 @@ function ShotsTab() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState(new Set());
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState(null);
+  // Advanced filtering: { status: string[], type: string[], artist: string[], custom: { [key]: string[] } }
+  const [filters, setFilters] = useState({ status: [], type: [], artist: [], custom: {} });
+  const [filterPanel, setFilterPanel] = useState(null); // null | 'main' | 'status' | 'type' | 'artist' | 'custom:key' | 'views'
+  const [savedViews, setSavedViews] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ftrack_saved_views') || '[]'); } catch { return []; }
+  });
+  const [customAttrConfigs, setCustomAttrConfigs] = useState([]);
+  const [customAttrValues, setCustomAttrValues] = useState({}); // { entityId: { key: value } }
   const [statusModal, setStatusModal] = useState(null);
   const [modalTarget, setModalTarget] = useState(null);
   const [editingTask, setEditingTask] = useState(null);
@@ -1801,6 +1809,7 @@ function ShotsTab() {
   const [player, setPlayer] = useState(null);
   const [members, setMembers] = useState([]);
   const [selectedTask, setSelectedTask] = useState(null);
+  const saveViewName = useRef('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -1849,6 +1858,14 @@ function ShotsTab() {
       })
       .catch(err => console.warn('[ShotsTab] Members error:', err));
 
+    // Fetch custom attribute configurations
+    fetchCustomAttributeConfigs()
+      .then(configs => {
+        console.log('[ShotsTab] Loaded', configs.length, 'custom attribute configs');
+        setCustomAttrConfigs(configs.filter(c => c.entity_type === 'task'));
+      })
+      .catch(err => console.warn('[ShotsTab] Custom attrs error:', err));
+
     Promise.all([fetchShots(selectedProjectId), fetchProjectTasks(selectedProjectId).catch(() => ({}))])
       .then(([data, tasksByShot]) => {
         // Build a flat task list — each entry is a task carrying its parent shot info
@@ -1891,8 +1908,6 @@ function ShotsTab() {
         }
         setShots(flat);
         // Merge statuses found on actual tasks into the status list
-        // This ensures statuses like "QC Ready" appear in the filter
-        // even if fetchShotStatuses missed them
         setStatuses(prev => {
           const existing = new Set(prev.map(s => s.id));
           const extra = [];
@@ -1904,16 +1919,101 @@ function ShotsTab() {
           }
           return extra.length ? [...prev, ...extra] : prev;
         });
+        // Fetch custom attribute values for all tasks
+        const taskIds = flat.map(f => f.id);
+        if (taskIds.length) {
+          fetchCustomAttributeValues(taskIds)
+            .then(vals => setCustomAttrValues(vals))
+            .catch(err => console.warn('[ShotsTab] Custom attr values error:', err));
+        }
       })
       .catch(err => setError(err.message))
       .finally(() => setShotsLoading(false));
   }, [selectedProjectId]);
 
+  // Compute unique values for each filterable field
+  const filterOptions = useMemo(() => {
+    const statusSet = new Map();
+    const typeSet = new Set();
+    const artistSet = new Set();
+    const customSets = {}; // key → Set of values
+    for (const s of shots) {
+      if (s.status?.name) statusSet.set(s.status.name, s.status);
+      if (s.type) typeSet.add(s.type);
+      if (s.artist) s.artist.split(', ').forEach(a => a && artistSet.add(a));
+      // Custom attributes
+      const cv = customAttrValues[s.id];
+      if (cv) {
+        for (const [k, v] of Object.entries(cv)) {
+          if (v != null && v !== '') {
+            if (!customSets[k]) customSets[k] = new Set();
+            customSets[k].add(String(v));
+          }
+        }
+      }
+    }
+    return {
+      statuses: [...statusSet.values()],
+      types: [...typeSet].sort(),
+      artists: [...artistSet].sort(),
+      custom: customSets,
+    };
+  }, [shots, customAttrValues]);
+
+  const hasActiveFilters = filters.status.length > 0 || filters.type.length > 0 || filters.artist.length > 0 || Object.values(filters.custom).some(v => v.length > 0);
+
   const filtered = shots.filter(s => {
-    const matchSearch = s.name.toLowerCase().includes(search.toLowerCase());
-    const matchStatus = !statusFilter || s.status.name === statusFilter;
-    return matchSearch && matchStatus;
+    const matchSearch = !search || s.name.toLowerCase().includes(search.toLowerCase()) || (s.description || '').toLowerCase().includes(search.toLowerCase());
+    const matchStatus = filters.status.length === 0 || filters.status.includes(s.status.name);
+    const matchType = filters.type.length === 0 || filters.type.includes(s.type);
+    const matchArtist = filters.artist.length === 0 || filters.artist.some(a => (s.artist || '').includes(a));
+    // Custom attribute filters
+    let matchCustom = true;
+    const cv = customAttrValues[s.id];
+    for (const [key, vals] of Object.entries(filters.custom)) {
+      if (vals.length === 0) continue;
+      const actual = cv?.[key];
+      if (!vals.includes(String(actual ?? ''))) { matchCustom = false; break; }
+    }
+    return matchSearch && matchStatus && matchType && matchArtist && matchCustom;
   });
+
+  const saveView = (name) => {
+    const view = { name, filters: { ...filters, custom: { ...filters.custom } }, date: Date.now() };
+    const updated = [...savedViews.filter(v => v.name !== name), view];
+    setSavedViews(updated);
+    localStorage.setItem('ftrack_saved_views', JSON.stringify(updated));
+  };
+
+  const loadView = (view) => {
+    setFilters(view.filters);
+    setFilterPanel(null);
+  };
+
+  const deleteView = (name) => {
+    const updated = savedViews.filter(v => v.name !== name);
+    setSavedViews(updated);
+    localStorage.setItem('ftrack_saved_views', JSON.stringify(updated));
+  };
+
+  const clearFilters = () => setFilters({ status: [], type: [], artist: [], custom: {} });
+
+  const toggleFilterValue = (field, value) => {
+    if (field.startsWith('custom:')) {
+      const key = field.slice(7);
+      setFilters(prev => {
+        const cur = prev.custom[key] || [];
+        const next = cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value];
+        return { ...prev, custom: { ...prev.custom, [key]: next } };
+      });
+    } else {
+      setFilters(prev => {
+        const cur = prev[field] || [];
+        const next = cur.includes(value) ? cur.filter(v => v !== value) : [...cur, value];
+        return { ...prev, [field]: next };
+      });
+    }
+  };
 
   const toggleSelect = (id) => {
     setSelected(prev => {
@@ -2087,12 +2187,211 @@ function ShotsTab() {
     if (detailShot?.id === id) setDetailShot(prev => ({ ...prev, status: newStatus }));
   }} />;
 
-  // ── Picker views (full screen) ──
-  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "filter" || statusModal === "assignee") {
-    const isFilter = statusModal === "filter";
+  // ── Filter panel (full screen) ──
+  if (filterPanel) {
+
+    // Sub-panel for a specific field
+    if (filterPanel === 'status' || filterPanel === 'type' || filterPanel === 'artist' || filterPanel.startsWith('custom:')) {
+      const isCustom = filterPanel.startsWith('custom:');
+      const field = filterPanel;
+      const label = isCustom
+        ? (customAttrConfigs.find(c => c.key === filterPanel.slice(7))?.label || filterPanel.slice(7))
+        : filterPanel.charAt(0).toUpperCase() + filterPanel.slice(1);
+
+      let options = [];
+      if (filterPanel === 'status') options = filterOptions.statuses.map(s => ({ value: s.name, color: s.color }));
+      else if (filterPanel === 'type') options = filterOptions.types.map(t => ({ value: t }));
+      else if (filterPanel === 'artist') options = filterOptions.artists.map(a => ({ value: a }));
+      else if (isCustom) {
+        const key = filterPanel.slice(7);
+        options = [...(filterOptions.custom[key] || [])].sort().map(v => ({ value: v }));
+      }
+
+      const selected_ = isCustom ? (filters.custom[filterPanel.slice(7)] || []) : (filters[filterPanel] || []);
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <div className="header">
+            <div className="back-btn" onClick={() => setFilterPanel('main')}>&#8592; Back</div>
+            <div className="header-title" style={{ fontSize: 15 }}>Filter: {label}</div>
+          </div>
+          <div className="scroll">
+            {options.map(opt => {
+              const active = selected_.includes(opt.value);
+              return (
+                <div key={opt.value} className="shot-list-item" onClick={() => toggleFilterValue(field, opt.value)}
+                  style={active ? { background: 'rgba(0,151,206,.1)' } : {}}>
+                  {opt.color && <span style={{ background: opt.color, width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />}
+                  <div className="shot-list-info"><div className="shot-list-name">{opt.value}</div></div>
+                  {active && <span style={{ color: 'var(--accent)', fontSize: 18 }}>&#10003;</span>}
+                </div>
+              );
+            })}
+            {options.length === 0 && (
+              <div className="empty"><div className="empty-text">No values found.</div></div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // Views sub-panel
+    if (filterPanel === 'views') {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <div className="header">
+            <div className="back-btn" onClick={() => setFilterPanel('main')}>&#8592; Back</div>
+            <div className="header-title" style={{ fontSize: 15 }}>Saved Views</div>
+          </div>
+          <div className="scroll">
+            {/* Save current */}
+            {hasActiveFilters && (
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Save current filters as view</div>
+                <form onSubmit={e => { e.preventDefault(); const name = saveViewName.current.trim(); if (name) { saveView(name); saveViewName.current = ''; showToast(`View "${name}" saved`); } }} style={{ display: 'flex', gap: 8 }}>
+                  <input
+                    className="search-input"
+                    placeholder="View name..."
+                    style={{ flex: 1, margin: 0 }}
+                    onChange={e => { saveViewName.current = e.target.value; }}
+                  />
+                  <button type="submit" className="action-btn" style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}>Save</button>
+                </form>
+              </div>
+            )}
+            {savedViews.length === 0 && !hasActiveFilters && (
+              <div className="empty"><div className="empty-text">No saved views. Apply some filters first, then save them as a view.</div></div>
+            )}
+            {savedViews.map(v => {
+              const summary = [
+                ...(v.filters.status || []),
+                ...(v.filters.type || []).map(t => `Type: ${t}`),
+                ...(v.filters.artist || []).map(a => `Artist: ${a}`),
+                ...Object.entries(v.filters.custom || {}).flatMap(([k, vals]) => vals.map(val => `${k}: ${val}`)),
+              ].join(', ') || 'No filters';
+              return (
+                <div key={v.name} className="shot-list-item" onClick={() => loadView(v)}>
+                  <div className="shot-list-info">
+                    <div className="shot-list-name">{v.name}</div>
+                    <div className="shot-list-artist" style={{ fontSize: 11, marginTop: 2 }}>{summary}</div>
+                  </div>
+                  <span onClick={e => { e.stopPropagation(); deleteView(v.name); showToast(`View "${v.name}" deleted`); }}
+                    style={{ color: 'var(--red)', fontSize: 18, cursor: 'pointer', padding: '4px 8px' }}>&#10005;</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
+
+    // Main filter panel — show all filterable fields
+    const activeCount = (field) => {
+      if (field.startsWith('custom:')) return (filters.custom[field.slice(7)] || []).length;
+      return (filters[field] || []).length;
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <div className="header">
+          <div className="back-btn" onClick={() => setFilterPanel(null)}>&#8592; Back</div>
+          <div className="header-title" style={{ fontSize: 15 }}>Filters</div>
+          <div className="header-right" style={{ gap: 8 }}>
+            {hasActiveFilters && (
+              <button style={{ background: "none", border: "none", color: "var(--red)", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={clearFilters}>Clear All</button>
+            )}
+            <button style={{ background: "none", border: "none", color: "var(--accent)", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={() => setFilterPanel('views')}>Views</button>
+          </div>
+        </div>
+        <div className="scroll">
+          {/* Active filter chips */}
+          {hasActiveFilters && (
+            <div style={{ padding: '8px 16px', display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {filters.status.map(v => (
+                <span key={`s:${v}`} onClick={() => toggleFilterValue('status', v)}
+                  style={{ background: 'var(--accent)', color: '#fff', borderRadius: 12, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                  {v} &#10005;
+                </span>
+              ))}
+              {filters.type.map(v => (
+                <span key={`t:${v}`} onClick={() => toggleFilterValue('type', v)}
+                  style={{ background: 'var(--blue)', color: '#fff', borderRadius: 12, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                  {v} &#10005;
+                </span>
+              ))}
+              {filters.artist.map(v => (
+                <span key={`a:${v}`} onClick={() => toggleFilterValue('artist', v)}
+                  style={{ background: 'var(--green)', color: '#fff', borderRadius: 12, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                  {v} &#10005;
+                </span>
+              ))}
+              {Object.entries(filters.custom).flatMap(([k, vals]) => vals.map(v => (
+                <span key={`c:${k}:${v}`} onClick={() => toggleFilterValue(`custom:${k}`, v)}
+                  style={{ background: 'var(--amber)', color: '#000', borderRadius: 12, padding: '3px 10px', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                  {k}: {v} &#10005;
+                </span>
+              )))}
+            </div>
+          )}
+
+          <div style={{ padding: '12px 16px 4px', fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Filter by</div>
+
+          {/* Status */}
+          <div className="shot-list-item" onClick={() => setFilterPanel('status')}>
+            <span style={{ width: 12, height: 12, borderRadius: '50%', background: 'var(--accent)', flexShrink: 0 }} />
+            <div className="shot-list-info"><div className="shot-list-name">Status</div></div>
+            {activeCount('status') > 0 && <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 8px', fontSize: 11 }}>{activeCount('status')}</span>}
+            <span style={{ color: 'var(--muted)', fontSize: 14 }}>&#8250;</span>
+          </div>
+
+          {/* Type */}
+          {filterOptions.types.length > 0 && (
+            <div className="shot-list-item" onClick={() => setFilterPanel('type')}>
+              <span style={{ width: 12, height: 12, borderRadius: 2, background: 'var(--blue)', flexShrink: 0 }} />
+              <div className="shot-list-info"><div className="shot-list-name">Task Type</div></div>
+              {activeCount('type') > 0 && <span style={{ background: 'var(--blue)', color: '#fff', borderRadius: 10, padding: '1px 8px', fontSize: 11 }}>{activeCount('type')}</span>}
+              <span style={{ color: 'var(--muted)', fontSize: 14 }}>&#8250;</span>
+            </div>
+          )}
+
+          {/* Artist */}
+          {filterOptions.artists.length > 0 && (
+            <div className="shot-list-item" onClick={() => setFilterPanel('artist')}>
+              <span style={{ width: 12, height: 12, borderRadius: '50%', background: 'var(--green)', flexShrink: 0 }} />
+              <div className="shot-list-info"><div className="shot-list-name">Artist</div></div>
+              {activeCount('artist') > 0 && <span style={{ background: 'var(--green)', color: '#fff', borderRadius: 10, padding: '1px 8px', fontSize: 11 }}>{activeCount('artist')}</span>}
+              <span style={{ color: 'var(--muted)', fontSize: 14 }}>&#8250;</span>
+            </div>
+          )}
+
+          {/* Custom Attributes */}
+          {Object.keys(filterOptions.custom).length > 0 && (
+            <div style={{ padding: '12px 16px 4px', fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1 }}>Custom Attributes</div>
+          )}
+          {Object.entries(filterOptions.custom).map(([key, valSet]) => {
+            const config = customAttrConfigs.find(c => c.key === key);
+            const label = config?.label || key;
+            return (
+              <div key={key} className="shot-list-item" onClick={() => setFilterPanel(`custom:${key}`)}>
+                <span style={{ width: 12, height: 12, borderRadius: 2, background: 'var(--amber)', flexShrink: 0 }} />
+                <div className="shot-list-info">
+                  <div className="shot-list-name">{label}</div>
+                  <div className="shot-list-artist" style={{ fontSize: 10 }}>{valSet.size} values</div>
+                </div>
+                {activeCount(`custom:${key}`) > 0 && <span style={{ background: 'var(--amber)', color: '#000', borderRadius: 10, padding: '1px 8px', fontSize: 11 }}>{activeCount(`custom:${key}`)}</span>}
+                <span style={{ color: 'var(--muted)', fontSize: 14 }}>&#8250;</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Picker views (full screen) — status change + assignee ──
+  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "assignee") {
     const isAssignee = statusModal === "assignee";
-    const title = isFilter ? "Filter by Status"
-      : isAssignee ? `Assign ${selected.size} shots`
+    const title = isAssignee ? `Assign ${selected.size} shots`
       : statusModal === "bulk" ? `Set status for ${selected.size} shots`
       : statusModal === "task-status" && editingTask ? editingTask.taskName
       : "Change Status";
@@ -2107,12 +2406,6 @@ function ShotsTab() {
           <div className="header-title" style={{ fontSize: 15 }}>{title}</div>
         </div>
         <div className="scroll">
-          {isFilter && (
-            <div className="shot-list-item" onClick={() => { setStatusFilter(null); setStatusModal(null); }}>
-              <div className="shot-list-info"><div className="shot-list-name">All Shots</div></div>
-              {!statusFilter && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
-            </div>
-          )}
           {isAssignee && members.map(u => (
             <div key={u.id} className="shot-list-item" onClick={() => toggleAssignee(u)} style={assignedIds.has(u.id) ? { background: 'rgba(76,175,80,.1)' } : {}}>
               <div className={`select-circle ${assignedIds.has(u.id) ? "checked" : ""}`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
@@ -2125,17 +2418,9 @@ function ShotsTab() {
             </div>
           ))}
           {!isAssignee && statuses.map(s => (
-            <div key={s.id} className="shot-list-item" onClick={() => {
-              if (isFilter) {
-                setStatusFilter(s.name);
-                setStatusModal(null);
-              } else {
-                applyStatus(s);
-              }
-            }}>
+            <div key={s.id} className="shot-list-item" onClick={() => applyStatus(s)}>
               <span style={{ background: s.color, width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
               <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
-              {isFilter && statusFilter === s.name && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
               {statusModal === "shot-status" && detailShot?.status?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
               {statusModal === "task-status" && editingTask?.currentStatusId === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
@@ -2244,11 +2529,41 @@ function ShotsTab() {
       {/* Toolbar */}
       <div className="shots-toolbar">
         <input className="search-input" placeholder="Search shots..." value={search} onChange={e => setSearch(e.target.value)} />
-        <button className={`filter-btn ${statusFilter ? "active" : ""}`}
-          onClick={() => { setModalTarget(null); setStatusModal(statusFilter ? null : "filter"); }}>
-          {statusFilter ? statusFilter.split(" ")[0] : "Filter"}
+        <button className={`filter-btn ${hasActiveFilters ? "active" : ""}`}
+          onClick={() => setFilterPanel('main')}>
+          {hasActiveFilters ? `Filter (${filters.status.length + filters.type.length + filters.artist.length + Object.values(filters.custom).reduce((a, v) => a + v.length, 0)})` : "Filter"}
         </button>
       </div>
+      {/* Active filter chips below toolbar */}
+      {hasActiveFilters && (
+        <div style={{ padding: '4px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
+          {filters.status.map(v => (
+            <span key={`s:${v}`} onClick={() => toggleFilterValue('status', v)}
+              style={{ background: 'rgba(0,151,206,.15)', color: 'var(--accent)', border: '1px solid var(--accent)', borderRadius: 12, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+              {v} &#10005;
+            </span>
+          ))}
+          {filters.type.map(v => (
+            <span key={`t:${v}`} onClick={() => toggleFilterValue('type', v)}
+              style={{ background: 'rgba(33,150,243,.15)', color: 'var(--blue)', border: '1px solid var(--blue)', borderRadius: 12, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+              {v} &#10005;
+            </span>
+          ))}
+          {filters.artist.map(v => (
+            <span key={`a:${v}`} onClick={() => toggleFilterValue('artist', v)}
+              style={{ background: 'rgba(76,175,80,.15)', color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 12, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+              {v} &#10005;
+            </span>
+          ))}
+          {Object.entries(filters.custom).flatMap(([k, vals]) => vals.map(v => (
+            <span key={`c:${k}:${v}`} onClick={() => toggleFilterValue(`custom:${k}`, v)}
+              style={{ background: 'rgba(245,166,35,.15)', color: 'var(--amber)', border: '1px solid var(--amber)', borderRadius: 12, padding: '2px 8px', fontSize: 10, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+              {k}: {v} &#10005;
+            </span>
+          )))}
+          <span onClick={clearFilters} style={{ color: 'var(--muted)', fontSize: 10, cursor: 'pointer', padding: '2px 4px', textDecoration: 'underline' }}>Clear</span>
+        </div>
+      )}
 
       <div className="scroll">
         {shotsLoading && <div className="loading">Loading shots...</div>}
