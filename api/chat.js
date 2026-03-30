@@ -1,3 +1,5 @@
+export const config = { maxDuration: 60 };
+
 import { FtrackClient, escapeQL, flattenDatetimes } from './ftrack-client.js';
 
 // ── Tool definitions (subset of ftrack MCP tools relevant for producer work) ──
