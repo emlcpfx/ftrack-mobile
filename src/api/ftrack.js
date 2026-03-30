@@ -158,6 +158,41 @@ export async function fetchProjectTasks(projectId) {
   return byShot;
 }
 
+// Fetch custom attribute configurations for Task entities
+export async function fetchCustomAttributeConfigs() {
+  const s = getSession();
+  const result = await s.query(
+    `select id, key, label, type.name, entity_type, config
+     from CustomAttributeConfiguration
+     where entity_type is "task" or entity_type is "show"`
+  );
+  return result.data;
+}
+
+// Fetch custom attribute values for a set of entity IDs
+export async function fetchCustomAttributeValues(entityIds) {
+  if (!entityIds.length) return {};
+  const s = getSession();
+  // Query in batches to avoid URL length limits
+  const batchSize = 50;
+  const byEntity = {};
+  for (let i = 0; i < entityIds.length; i += batchSize) {
+    const batch = entityIds.slice(i, i + batchSize);
+    const idList = batch.map(id => `"${id}"`).join(', ');
+    const result = await s.query(
+      `select value, configuration.key, configuration.label, entity_id
+       from CustomAttributeValue
+       where entity_id in (${idList})`
+    );
+    for (const row of result.data) {
+      const eid = row.entity_id;
+      if (!byEntity[eid]) byEntity[eid] = {};
+      byEntity[eid][row.configuration?.key || row.configuration?.label] = row.value;
+    }
+  }
+  return byEntity;
+}
+
 export async function fetchStatuses() {
   const s = getSession();
   const result = await s.query(
