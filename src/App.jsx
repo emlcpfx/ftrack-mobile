@@ -2922,12 +2922,254 @@ function ChatTab() {
   );
 }
 
+// ─── Push Notification Helpers ──────────────────────────────────────────────
+const VAPID_PUBLIC_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_VAPID_PUBLIC_KEY) || '';
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; ++i) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+function NotificationSettings({ onClose }) {
+  const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+  const [subscribed, setSubscribed] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [watchStatuses, setWatchStatuses] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('ftrack_watch_statuses') || '["QC Ready"]'); } catch { return ['QC Ready']; }
+  });
+  const [newStatus, setNewStatus] = useState('');
+  const [toast, setToast] = useState('');
+  const [projectId, setProjectId] = useState(() => {
+    try { return sessionStorage.getItem('ftrack_shots_project') || ''; } catch { return ''; }
+  });
+  const [projects, setProjects] = useState([]);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2200); };
+
+  // Check existing subscription
+  useEffect(() => {
+    (async () => {
+      try {
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          setSubscribed(!!sub);
+        }
+        fetchProjects().then(setProjects).catch(() => {});
+      } catch {}
+      setLoading(false);
+    })();
+  }, []);
+
+  const subscribe = async () => {
+    try {
+      if (!VAPID_PUBLIC_KEY) {
+        showToast('VAPID key not configured — see setup instructions');
+        return;
+      }
+      // Request permission
+      const perm = await Notification.requestPermission();
+      setPermission(perm);
+      if (perm !== 'granted') {
+        showToast('Notification permission denied');
+        return;
+      }
+
+      setLoading(true);
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      });
+
+      // Send subscription to server
+      const auth = JSON.parse(localStorage.getItem('ftrack_auth') || '{}');
+      const resp = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          subscription: sub.toJSON(),
+          ftrackServer: auth.server,
+          ftrackUser: auth.user,
+          ftrackApiKey: auth.apiKey,
+          watchStatuses,
+          projectId: projectId || null,
+        }),
+      });
+
+      if (!resp.ok) throw new Error('Server error');
+      setSubscribed(true);
+      localStorage.setItem('ftrack_watch_statuses', JSON.stringify(watchStatuses));
+      showToast('Notifications enabled!');
+    } catch (err) {
+      console.error('[Notifications] Subscribe error:', err);
+      showToast(`Failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const unsubscribe = async () => {
+    try {
+      setLoading(true);
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await fetch('/api/subscribe', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ endpoint: sub.endpoint }),
+        });
+        await sub.unsubscribe();
+      }
+      setSubscribed(false);
+      showToast('Notifications disabled');
+    } catch (err) {
+      showToast(`Failed: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addStatus = () => {
+    const s = newStatus.trim();
+    if (s && !watchStatuses.includes(s)) {
+      const updated = [...watchStatuses, s];
+      setWatchStatuses(updated);
+      localStorage.setItem('ftrack_watch_statuses', JSON.stringify(updated));
+      setNewStatus('');
+    }
+  };
+
+  const removeStatus = (s) => {
+    const updated = watchStatuses.filter(v => v !== s);
+    setWatchStatuses(updated);
+    localStorage.setItem('ftrack_watch_statuses', JSON.stringify(updated));
+  };
+
+  const isSupported = typeof Notification !== 'undefined' && 'PushManager' in window;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+      <div className="header">
+        <div className="back-btn" onClick={onClose}>&#8592; Back</div>
+        <div className="header-title" style={{ fontSize: 15 }}>Notifications</div>
+      </div>
+      <div className="scroll" style={{ padding: 16 }}>
+        <Toast msg={toast} />
+
+        {/* iOS standalone check */}
+        {isIOS && !isStandalone && (
+          <div style={{ background: 'rgba(245,166,35,.15)', border: '1px solid var(--amber)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13, color: 'var(--amber)' }}>
+            Push notifications on iOS require the app to be added to your Home Screen. Open Safari, tap Share, then "Add to Home Screen".
+          </div>
+        )}
+
+        {!isSupported && (
+          <div style={{ background: 'rgba(231,76,60,.15)', border: '1px solid var(--red)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13, color: 'var(--red)' }}>
+            Push notifications are not supported on this browser/device.
+          </div>
+        )}
+
+        {!VAPID_PUBLIC_KEY && (
+          <div style={{ background: 'rgba(245,166,35,.15)', border: '1px solid var(--amber)', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13, color: 'var(--amber)' }}>
+            VAPID keys not configured. Set VITE_VAPID_PUBLIC_KEY in your environment. See setup instructions below.
+          </div>
+        )}
+
+        {/* Status */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Status</div>
+          <div style={{ fontSize: 14, color: 'var(--text)' }}>
+            {subscribed ? (
+              <span style={{ color: 'var(--green)' }}>Notifications active</span>
+            ) : (
+              <span style={{ color: 'var(--muted)' }}>Not subscribed</span>
+            )}
+          </div>
+        </div>
+
+        {/* Watch statuses */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Notify me when a task becomes</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
+            {watchStatuses.map(s => (
+              <span key={s} onClick={() => removeStatus(s)}
+                style={{ background: 'var(--accent)', color: '#fff', borderRadius: 12, padding: '4px 10px', fontSize: 12, cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+                {s} &#10005;
+              </span>
+            ))}
+          </div>
+          <form onSubmit={e => { e.preventDefault(); addStatus(); }} style={{ display: 'flex', gap: 8 }}>
+            <input className="search-input" placeholder="Add status name..." value={newStatus} onChange={e => setNewStatus(e.target.value)} style={{ flex: 1, margin: 0 }} />
+            <button type="submit" className="action-btn" style={{ padding: '8px 14px' }}>Add</button>
+          </form>
+        </div>
+
+        {/* Project scope */}
+        {projects.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>Project (optional)</div>
+            <select className="project-picker" value={projectId} onChange={e => setProjectId(e.target.value)} style={{ width: '100%' }}>
+              <option value="">All projects</option>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+        )}
+
+        {/* Subscribe/Unsubscribe */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          {!subscribed ? (
+            <button className="action-btn" style={{ flex: 1, padding: 12, fontSize: 14, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8 }}
+              onClick={subscribe} disabled={loading || !isSupported || !VAPID_PUBLIC_KEY}>
+              {loading ? 'Setting up...' : 'Enable Notifications'}
+            </button>
+          ) : (
+            <>
+              <button className="action-btn" style={{ flex: 1, padding: 12, fontSize: 14, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8 }}
+                onClick={subscribe} disabled={loading}>
+                {loading ? 'Updating...' : 'Update Settings'}
+              </button>
+              <button className="action-btn" style={{ padding: '12px 16px', fontSize: 14, background: 'var(--card)', color: 'var(--red)', border: '1px solid var(--red)', borderRadius: 8 }}
+                onClick={unsubscribe} disabled={loading}>
+                Disable
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Setup instructions */}
+        <div style={{ marginTop: 24, padding: 16, background: 'var(--card)', borderRadius: 8, fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>Setup (one-time)</div>
+          <div>1. Set these environment variables in Vercel:</div>
+          <div style={{ fontFamily: 'monospace', fontSize: 11, background: 'var(--bg)', padding: '6px 8px', borderRadius: 4, margin: '4px 0 8px', wordBreak: 'break-all' }}>
+            VAPID_PUBLIC_KEY=your_public_key<br/>
+            VAPID_PRIVATE_KEY=your_private_key<br/>
+            VITE_VAPID_PUBLIC_KEY=same_public_key<br/>
+            VAPID_EMAIL=mailto:you@email.com
+          </div>
+          <div>2. Set up Vercel KV storage in your project dashboard</div>
+          <div>3. Redeploy after adding env vars</div>
+          <div style={{ marginTop: 8 }}>Generate VAPID keys: <span style={{ fontFamily: 'monospace', fontSize: 11 }}>npx web-push generate-vapid-keys</span></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [auth, setAuth] = useState(null);
   const [tab, setTab] = useState(() => {
     try { return sessionStorage.getItem('ftrack_tab') || 'reviews'; } catch { return 'reviews'; }
   });
+  const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [restoring, setRestoring] = useState(true);
 
   // Persist active tab
@@ -2986,22 +3228,32 @@ export default function App() {
       <style>{css}</style>
       <div className="app">
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", minHeight: 0 }}>
-          {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
-          {tab === "shots" && <ShotsTab />}
-          {tab === "chat" && <ChatTab />}
+          {showNotifSettings ? (
+            <NotificationSettings onClose={() => setShowNotifSettings(false)} />
+          ) : (
+            <>
+              {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
+              {tab === "shots" && <ShotsTab />}
+              {tab === "chat" && <ChatTab />}
+            </>
+          )}
         </div>
         <div className="bottom-nav">
-          <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => setTab("reviews")}>
+          <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("reviews"); }}>
             <div className="nav-icon">&#127916;</div>
             <div className="nav-label">Reviews</div>
           </div>
-          <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => setTab("shots")}>
+          <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("shots"); }}>
             <div className="nav-icon">&#127902;</div>
             <div className="nav-label">Shots</div>
           </div>
-          <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>
+          <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("chat"); }}>
             <div className="nav-icon">&#128172;</div>
             <div className="nav-label">Chat</div>
+          </div>
+          <div className={`nav-item ${showNotifSettings ? "active" : ""}`} onClick={() => setShowNotifSettings(true)}>
+            <div className="nav-icon">&#128276;</div>
+            <div className="nav-label">Alerts</div>
           </div>
         </div>
       </div>
