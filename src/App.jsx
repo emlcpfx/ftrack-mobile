@@ -257,7 +257,7 @@ const css = `
   .add-review-check.added { background:var(--green); border-color:var(--green); }
 
   /* ── Chat Tab ── */
-  .chat-container { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .chat-container { display:flex; flex-direction:column; flex:1; min-height:0; padding-bottom:68px; }
   .chat-messages { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:16px; display:flex; flex-direction:column; gap:12px; }
   .chat-messages::-webkit-scrollbar { display:none; }
   .chat-msg { max-width:85%; padding:10px 14px; border-radius:12px; font-size:13px; line-height:1.5; word-wrap:break-word; }
