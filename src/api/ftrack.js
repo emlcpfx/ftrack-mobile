@@ -247,15 +247,25 @@ export async function unassignUserFromShots(shotIds, userId) {
 
 // ── Versions & Components ─────────────────────────────────────────────────────
 
-export async function fetchShotVersions(shotId) {
+export async function fetchShotVersions(shotId, taskId) {
   const s = getSession();
-  const result = await s.query(
-    `select id, version, status.id, status.name, status.color,
+  // If we have a task ID, query versions linked to that task
+  // Otherwise fall back to versions under the shot's assets
+  let query;
+  if (taskId) {
+    query = `select id, version, status.id, status.name, status.color,
+            thumbnail_id, user.first_name, date
+     from AssetVersion
+     where task_id is "${taskId}"
+     order by version descending`;
+  } else {
+    query = `select id, version, status.id, status.name, status.color,
             thumbnail_id, user.first_name, date
      from AssetVersion
      where asset.parent.id is "${shotId}"
-     order by version descending`
-  );
+     order by version descending`;
+  }
+  const result = await s.query(query);
   return result.data;
 }
 

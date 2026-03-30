@@ -1937,11 +1937,12 @@ function ShotsTab() {
 
   const openShotDetail = async (shot) => {
     setDetailShot(shot);
-    // If single task, load versions immediately
-    if (shot.taskCount <= 1) {
+    // Load versions — use task ID if this is a task entry, otherwise shot ID
+    {
       setVersionsLoading(true);
       try {
-        const vers = await fetchShotVersions(shot.id);
+        const isTask = !!shot.type; // tasks have a type like "Compositing"
+        const vers = await fetchShotVersions(shot.shotId, isTask ? shot.id : null);
         setVersions(vers.map(v => ({
           id: v.id,
           version: v.version,
