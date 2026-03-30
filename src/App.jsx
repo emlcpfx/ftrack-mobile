@@ -784,10 +784,13 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
             <div key={s.id} className="shot-list-item" onClick={async () => {
               const newStatus = { id: s.id, name: s.name, color: normalizeColor(s.color) };
               try {
-                console.log('[Player] Updating status:', shot.taskId ? 'Task' : 'Version', shot.taskId || shot.versionId, '→', s.name, s.id);
+                // Always update the Task status — version status is not used
                 if (shot.taskId) {
+                  console.log('[Player] Updating Task status:', shot.taskId, '→', s.name, s.id);
                   await updateTaskStatus(shot.taskId, s.id);
                 } else {
+                  // Fallback: update version status if no task is linked
+                  console.log('[Player] No taskId, falling back to version status:', shot.versionId, '→', s.name, s.id);
                   await updateVersionStatus(shot.versionId, s.id);
                 }
                 setCurrentStatus(newStatus);
@@ -881,7 +884,7 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
           <div style={{ flex: 1 }}>
             <StatusPill status={currentStatus} />
           </div>
-          {shot.taskId && (
+          {(shot.taskId || shot.versionId) && (
             <button className="action-btn" style={{ flex: 0, whiteSpace: 'nowrap', padding: '8px 16px' }}
               onClick={() => setStatusPicker(true)}>Change Status</button>
           )}
@@ -1954,6 +1957,7 @@ function ShotsTab() {
           artist: v.user?.first_name || '',
           date: formatDate(v.date),
           thumb: getThumbnailUrl(v.thumbnail_id),
+          taskId: v.task_id || null,
         })));
       } catch (err) {
         showToast('Failed to load versions');
@@ -1973,6 +1977,8 @@ function ShotsTab() {
       versionId: ver.id,
       thumb: ver.thumb,
       hasVersion: true,
+      taskId: ver.taskId || detailShot.id, // version's task, or fall back to the task entry itself
+      shotId: detailShot.shotId || detailShot.id,
     });
   };
 
