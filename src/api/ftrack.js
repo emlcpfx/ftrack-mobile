@@ -514,6 +514,47 @@ export async function searchReviews(searchTerm) {
   return result.data;
 }
 
+/** Fetch review session thumbnail previews (first 4 RSO thumbnails) */
+export async function fetchReviewThumbnails(reviewSessionIds) {
+  if (!reviewSessionIds.length) return {};
+  const s = getSession();
+  const result = await s.query(
+    `select review_session_id, asset_version.thumbnail_id
+     from ReviewSessionObject
+     where review_session_id in (${reviewSessionIds.map(id => `"${id}"`).join(',')})
+     order by sort_order ascending`
+  );
+  const byReview = {};
+  for (const rso of result.data) {
+    const rsId = rso.review_session_id;
+    if (!byReview[rsId]) byReview[rsId] = [];
+    const thumbId = rso.asset_version?.thumbnail_id;
+    if (thumbId && byReview[rsId].length < 4) {
+      byReview[rsId].push(getThumbnailUrl(thumbId));
+    }
+  }
+  return byReview;
+}
+
+/** Get the shareable review URL for a review session */
+export function getReviewUrl(reviewSessionId) {
+  if (!_session) return null;
+  const serverUrl = _session.serverUrl.replace(/\/+$/, '');
+  return `${serverUrl}/#slideEntityId=${reviewSessionId}&slideEntityType=reviewsession&view=review_session`;
+}
+
+/** Bulk update version statuses */
+export async function bulkUpdateVersionStatus(versionIds, statusId) {
+  const s = getSession();
+  return Promise.all(versionIds.map(id => s.update('AssetVersion', [id], { status_id: statusId })));
+}
+
+/** Bulk update task statuses */
+export async function bulkUpdateTaskStatus(taskIds, statusId) {
+  const s = getSession();
+  return Promise.all(taskIds.map(id => s.update('Task', [id], { status_id: statusId })));
+}
+
 // ── Media ─────────────────────────────────────────────────────────────────────
 
 export function getThumbnailUrl(thumbnailId, size = 160) {

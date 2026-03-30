@@ -546,7 +546,7 @@ async function callGeminiWithClient(apiKey, messages, client) {
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('POST only');
 
-  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey } = req.body;
+  const { messages, provider, llmApiKey, ftrackServer, ftrackUser, ftrackApiKey, customPrompt } = req.body;
 
   if (!messages || !provider || !llmApiKey) {
     return res.status(400).json({ error: 'Missing required fields: messages, provider, llmApiKey' });
@@ -557,12 +557,15 @@ export default async function handler(req, res) {
 
   try {
     const client = new FtrackClient(ftrackServer, ftrackUser, ftrackApiKey);
+    const systemPrompt = customPrompt
+      ? SYSTEM_PROMPT + '\n\n--- User Custom Instructions ---\n' + customPrompt
+      : SYSTEM_PROMPT;
     let response;
 
     if (provider === 'claude') {
-      response = await callClaudeWithClient(llmApiKey, messages, client);
+      response = await callClaudeWithClient(llmApiKey, messages, client, systemPrompt);
     } else if (provider === 'gemini') {
-      response = await callGeminiWithClient(llmApiKey, messages, client);
+      response = await callGeminiWithClient(llmApiKey, messages, client, systemPrompt);
     } else {
       return res.status(400).json({ error: `Unknown provider: ${provider}` });
     }
