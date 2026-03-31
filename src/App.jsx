@@ -501,6 +501,8 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
   const [drawMode, setDrawMode] = useState(false);
   const [color, setColor] = useState("#ff4d6a");
   const [brushSize, setBrushSize] = useState("md");
+  const undoStack = useRef([]);
+  const redoStack = useRef([]);
   const [notes, setNotes] = useState([]);
   const [notesLoading, setNotesLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
@@ -625,6 +627,49 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
     return { x: src.clientX - rect.left, y: src.clientY - rect.top };
   };
 
+  const saveCanvasState = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    undoStack.current.push(canvas.toDataURL());
+    redoStack.current = [];
+  };
+
+  const restoreCanvasState = (dataUrl) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!dataUrl) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+    };
+    img.src = dataUrl;
+  };
+
+  const undoAnnotation = () => {
+    if (undoStack.current.length === 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    // Save current state to redo stack
+    redoStack.current.push(canvas.toDataURL());
+    // Pop last state from undo stack
+    undoStack.current.pop();
+    // Restore previous state (or clear if empty)
+    const prev = undoStack.current.length > 0 ? undoStack.current[undoStack.current.length - 1] : null;
+    restoreCanvasState(prev);
+  };
+
+  const redoAnnotation = () => {
+    if (redoStack.current.length === 0) return;
+    const state = redoStack.current.pop();
+    undoStack.current.push(state);
+    restoreCanvasState(state);
+  };
+
   const startDraw = (e) => {
     if (!drawMode) return;
     e.preventDefault();
@@ -650,10 +695,17 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
     lastPos.current = pos;
   };
 
-  const endDraw = () => setDrawing(false);
+  const endDraw = () => {
+    if (drawing) {
+      setDrawing(false);
+      saveCanvasState();
+    }
+  };
 
   const clearCanvas = () => {
     const canvas = canvasRef.current;
+    if (!canvas) return;
+    saveCanvasState(); // saves current drawing so undo restores it
     canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
     showToast("Annotation cleared");
   };
@@ -716,6 +768,8 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
       setNoteText("");
       if (annotationBlob) {
         canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+        undoStack.current = [];
+        redoStack.current = [];
         setDrawMode(false);
       }
       showToast(annotationBlob ? "Note + annotation added" : "Note added");
@@ -878,6 +932,9 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
             <button key={s} className={`brush-btn ${brushSize === s ? "active" : ""}`}
               onClick={() => setBrushSize(s)}>{s.toUpperCase()}</button>
           ))}
+          <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 2px' }} />
+          <button className="brush-btn" onClick={undoAnnotation} title="Undo">&#8617;</button>
+          <button className="brush-btn" onClick={redoAnnotation} title="Redo">&#8618;</button>
           <button className="brush-btn" onClick={clearCanvas} style={{ color: "var(--red)" }}>&#10005;</button>
         </div>
       )}
