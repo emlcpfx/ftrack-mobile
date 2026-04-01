@@ -12,7 +12,7 @@ import {
   getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
-  getReviewUrl,
+  getReviewUrl, fetchLatestVersionForTask, fetchLatestVersionForShot,
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
 } from "./api/ftrack";
 
@@ -1872,6 +1872,13 @@ function ShotsTab() {
   const [player, setPlayer] = useState(null);
   const [members, setMembers] = useState([]);
   const [selectedTask, setSelectedTask] = useState(null);
+  // Add to review
+  const [reviewPickerOpen, setReviewPickerOpen] = useState(false);
+  const [reviewList, setReviewList] = useState([]);
+  const [reviewListLoading, setReviewListLoading] = useState(false);
+  const [addingToReview, setAddingToReview] = useState(false);
+  const [newRevName, setNewRevName] = useState('');
+  const [creatingRev, setCreatingRev] = useState(false);
   const saveViewName = useRef('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
@@ -2248,6 +2255,58 @@ function ShotsTab() {
   const selectAll = () => setSelected(new Set(filtered.map(s => s.id)));
   const clearAll = () => { setSelected(new Set()); setMultiSelect(false); };
 
+  const openReviewPicker = async () => {
+    setReviewPickerOpen(true);
+    setReviewListLoading(true);
+    try {
+      const revs = await fetchReviews(selectedProjectId || undefined);
+      setReviewList(revs);
+    } catch (err) {
+      showToast('Failed to load reviews');
+    } finally {
+      setReviewListLoading(false);
+    }
+  };
+
+  const addSelectedToReview = async (review) => {
+    setAddingToReview(true);
+    try {
+      const selectedItems = shots.filter(s => selected.has(s.id));
+      let added = 0;
+      let skipped = 0;
+      for (const item of selectedItems) {
+        // Get latest version for this task/shot
+        let ver = null;
+        if (item.type) {
+          // It's a task — get latest version for this task
+          ver = await fetchLatestVersionForTask(item.id);
+        }
+        if (!ver) {
+          // Fall back to shot-level latest version
+          ver = await fetchLatestVersionForShot(item.shotId);
+        }
+        if (ver) {
+          await addVersionToReview(review.id, ver.id, added);
+          added++;
+        } else {
+          skipped++;
+        }
+      }
+      const msg = skipped > 0
+        ? `Added ${added} version${added !== 1 ? 's' : ''} to "${review.name}" (${skipped} had no versions)`
+        : `Added ${added} version${added !== 1 ? 's' : ''} to "${review.name}"`;
+      showToast(msg);
+      setReviewPickerOpen(false);
+      setSelected(new Set());
+      setMultiSelect(false);
+    } catch (err) {
+      console.error('[ShotsTab] Add to review error:', err);
+      showToast('Failed: ' + (err.message || 'Could not add to review'));
+    } finally {
+      setAddingToReview(false);
+    }
+  };
+
   // Long press
   const pressTimer = useRef(null);
   const startPress = (shot) => { pressTimer.current = setTimeout(() => handleLongPress(shot), 500); };
@@ -2260,6 +2319,72 @@ function ShotsTab() {
     setShots(prev => prev.map(s => s.id === id ? { ...s, status: newStatus } : s));
     if (detailShot?.id === id) setDetailShot(prev => ({ ...prev, status: newStatus }));
   }} />;
+
+  // ── Review picker (full screen) ──
+  if (reviewPickerOpen) {
+    const createAndAdd = async () => {
+      const name = newRevName.trim();
+      if (!name) return;
+      setCreatingRev(true);
+      try {
+        const result = await createReviewSession(name);
+        const newReview = { id: result.data?.id || result.id, name };
+        setReviewList(prev => [newReview, ...prev]);
+        showToast(`Created "${name}"`);
+        setNewRevName('');
+        // Auto-add to it
+        await addSelectedToReview(newReview);
+      } catch (err) {
+        showToast('Failed to create review');
+        setCreatingRev(false);
+      }
+    };
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+        <div className="header">
+          <div className="back-btn" onClick={() => setReviewPickerOpen(false)}>&#8592; Back</div>
+          <div className="header-title" style={{ fontSize: 15 }}>Add {selected.size} to Review</div>
+        </div>
+        <div className="scroll">
+          {/* Create new review */}
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Create new review</div>
+            <form onSubmit={e => { e.preventDefault(); createAndAdd(); }} style={{ display: 'flex', gap: 8 }}>
+              <input className="search-input" placeholder="Review name..." style={{ flex: 1, margin: 0 }}
+                value={newRevName} onChange={e => setNewRevName(e.target.value)} disabled={creatingRev} />
+              <button type="submit" className="action-btn" style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}
+                disabled={creatingRev || !newRevName.trim()}>
+                {creatingRev ? '...' : 'Create'}
+              </button>
+            </form>
+          </div>
+
+          {addingToReview && (
+            <div className="loading" style={{ padding: 16 }}>Adding versions to review...</div>
+          )}
+
+          {reviewListLoading && <div className="loading" style={{ padding: 16 }}>Loading reviews...</div>}
+
+          {!reviewListLoading && reviewList.length === 0 && (
+            <div className="empty"><div className="empty-text">No reviews found for this project.</div></div>
+          )}
+
+          {!reviewListLoading && reviewList.map(rev => (
+            <div key={rev.id} className="shot-list-item" onClick={() => !addingToReview && addSelectedToReview(rev)}
+              style={addingToReview ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>&#127916;</span>
+              <div className="shot-list-info">
+                <div className="shot-list-name">{rev.name}</div>
+                {rev.created_at && <div className="shot-list-artist">{formatDate(rev.created_at)}</div>}
+              </div>
+              <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600 }}>Add</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // ── Filter panel (full screen) ──
   if (filterPanel) {
@@ -2568,6 +2693,7 @@ function ShotsTab() {
               {selected.size > 0 && (<>
                 <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Status</button>
                 <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("assignee")}>Assign</button>
+                <button style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 12px', color: "#fff", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={openReviewPicker}>Review</button>
               </>)}
             </div>
           </>
