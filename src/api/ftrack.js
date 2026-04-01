@@ -490,7 +490,7 @@ export async function fetchLatestVersionForTask(taskId) {
   const result = await s.query(
     `select id, version, thumbnail_id
      from AssetVersion
-     where task.id is "${taskId}"
+     where task_id is "${taskId}"
      order by version descending
      limit 1`
   );
