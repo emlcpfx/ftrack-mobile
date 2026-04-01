@@ -2272,23 +2272,31 @@ function ShotsTab() {
     setAddingToReview(true);
     try {
       const selectedItems = shots.filter(s => selected.has(s.id));
+      console.log('[AddToReview] Selected items:', selectedItems.map(s => ({ id: s.id, shotId: s.shotId, name: s.name, type: s.type })));
+      console.log('[AddToReview] Target review:', review.id, review.name);
       let added = 0;
       let skipped = 0;
       for (const item of selectedItems) {
-        // Get latest version for this task/shot
         let ver = null;
-        if (item.type) {
-          // It's a task — get latest version for this task
+        // Try task-level first
+        if (item.type && item.id) {
+          console.log('[AddToReview] Fetching latest version for task:', item.id, item.name);
           ver = await fetchLatestVersionForTask(item.id);
+          console.log('[AddToReview] Task version result:', ver);
         }
-        if (!ver) {
-          // Fall back to shot-level latest version
+        // Fall back to shot-level
+        if (!ver && item.shotId) {
+          console.log('[AddToReview] Falling back to shot:', item.shotId);
           ver = await fetchLatestVersionForShot(item.shotId);
+          console.log('[AddToReview] Shot version result:', ver);
         }
         if (ver) {
-          await addVersionToReview(review.id, ver.id, added);
+          console.log('[AddToReview] Adding version', ver.id, 'to review', review.id);
+          const result = await addVersionToReview(review.id, ver.id, added);
+          console.log('[AddToReview] addVersionToReview result:', result);
           added++;
         } else {
+          console.log('[AddToReview] No version found for', item.name, '- skipping');
           skipped++;
         }
       }
@@ -2300,7 +2308,7 @@ function ShotsTab() {
       setSelected(new Set());
       setMultiSelect(false);
     } catch (err) {
-      console.error('[ShotsTab] Add to review error:', err);
+      console.error('[AddToReview] Error:', err);
       showToast('Failed: ' + (err.message || 'Could not add to review'));
     } finally {
       setAddingToReview(false);
