@@ -2268,47 +2268,58 @@ function ShotsTab() {
     }
   };
 
+  const [debugLog, setDebugLog] = useState([]);
+  const addLog = (msg) => setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
+
   const addSelectedToReview = async (review) => {
     setAddingToReview(true);
+    setDebugLog([]);
     try {
       const selectedItems = shots.filter(s => selected.has(s.id));
-      console.log('[AddToReview] Selected items:', selectedItems.map(s => ({ id: s.id, shotId: s.shotId, name: s.name, type: s.type })));
-      console.log('[AddToReview] Target review:', review.id, review.name);
+      addLog(`${selectedItems.length} items selected, target: "${review.name}" (${review.id})`);
       let added = 0;
       let skipped = 0;
       for (const item of selectedItems) {
         let ver = null;
-        // Try task-level first
         if (item.type && item.id) {
-          console.log('[AddToReview] Fetching latest version for task:', item.id, item.name);
-          ver = await fetchLatestVersionForTask(item.id);
-          console.log('[AddToReview] Task version result:', ver);
+          addLog(`Task "${item.name}" (${item.id}) — fetching version...`);
+          try {
+            ver = await fetchLatestVersionForTask(item.id);
+            addLog(ver ? `  Got version: ${ver.id} (v${ver.version})` : '  No task version found');
+          } catch (e) {
+            addLog(`  Task query ERROR: ${e.message}`);
+          }
         }
-        // Fall back to shot-level
         if (!ver && item.shotId) {
-          console.log('[AddToReview] Falling back to shot:', item.shotId);
-          ver = await fetchLatestVersionForShot(item.shotId);
-          console.log('[AddToReview] Shot version result:', ver);
+          addLog(`Trying shot ${item.shotId}...`);
+          try {
+            ver = await fetchLatestVersionForShot(item.shotId);
+            addLog(ver ? `  Got shot version: ${ver.id} (v${ver.version})` : '  No shot version found');
+          } catch (e) {
+            addLog(`  Shot query ERROR: ${e.message}`);
+          }
         }
         if (ver) {
-          console.log('[AddToReview] Adding version', ver.id, 'to review', review.id);
-          const result = await addVersionToReview(review.id, ver.id, added);
-          console.log('[AddToReview] addVersionToReview result:', result);
-          added++;
+          try {
+            const result = await addVersionToReview(review.id, ver.id, added);
+            addLog(`  Added to review OK: ${JSON.stringify(result?.data?.id || result?.id || 'no-id')}`);
+            added++;
+          } catch (e) {
+            addLog(`  addVersionToReview ERROR: ${e.message}`);
+          }
         } else {
-          console.log('[AddToReview] No version found for', item.name, '- skipping');
+          addLog(`  SKIPPED: no version for "${item.name}"`);
           skipped++;
         }
       }
       const msg = skipped > 0
         ? `Added ${added} version${added !== 1 ? 's' : ''} to "${review.name}" (${skipped} had no versions)`
         : `Added ${added} version${added !== 1 ? 's' : ''} to "${review.name}"`;
+      addLog(`DONE: ${msg}`);
       showToast(msg);
-      setReviewPickerOpen(false);
-      setSelected(new Set());
-      setMultiSelect(false);
+      // Don't close the picker so user can see the debug log
     } catch (err) {
-      console.error('[AddToReview] Error:', err);
+      addLog(`FATAL ERROR: ${err.message}`);
       showToast('Failed: ' + (err.message || 'Could not add to review'));
     } finally {
       setAddingToReview(false);
@@ -2389,6 +2400,18 @@ function ShotsTab() {
               <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600 }}>Add</span>
             </div>
           ))}
+
+          {/* Debug log */}
+          {debugLog.length > 0 && (
+            <div style={{ margin: '12px 16px', padding: 12, background: '#000', borderRadius: 8, fontFamily: 'monospace', fontSize: 10, color: '#0f0', maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+              <div style={{ color: '#ff0', marginBottom: 4, fontWeight: 'bold' }}>Debug Log:</div>
+              {debugLog.map((line, i) => <div key={i}>{line}</div>)}
+              <button onClick={() => { setReviewPickerOpen(false); setSelected(new Set()); setMultiSelect(false); setDebugLog([]); }}
+                style={{ marginTop: 8, background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '6px 12px', color: '#fff', fontSize: 11 }}>
+                Done
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
