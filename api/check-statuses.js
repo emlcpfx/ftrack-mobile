@@ -8,7 +8,6 @@
  * GET /api/check-statuses (invoked by cron)
  */
 
-import webpush from 'web-push';
 import { FtrackClient } from './ftrack-client.js';
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
@@ -20,13 +19,17 @@ const LOOKBACK_MINUTES = 2;
 
 export const config = { maxDuration: 30 };
 
-let kv = null;
-try {
-  const mod = await import('@vercel/kv');
-  kv = mod.kv;
-} catch {}
+async function getKv() {
+  try {
+    const mod = await import('@vercel/kv');
+    return mod.kv;
+  } catch {
+    return null;
+  }
+}
 
 async function getSubscriptions() {
+  const kv = await getKv();
   if (kv) {
     return (await kv.get('push_subscriptions')) || [];
   }
@@ -34,6 +37,7 @@ async function getSubscriptions() {
 }
 
 async function removeSubscription(endpoint) {
+  const kv = await getKv();
   if (kv) {
     const subs = await getSubscriptions();
     await kv.set('push_subscriptions', subs.filter(s => s.id !== endpoint));
@@ -56,6 +60,12 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'VAPID keys not configured' });
   }
 
+  let webpush;
+  try {
+    webpush = (await import('web-push')).default;
+  } catch {
+    return res.status(500).json({ error: 'web-push module not available' });
+  }
   webpush.setVapidDetails(VAPID_EMAIL, VAPID_PUBLIC, VAPID_PRIVATE);
 
   const subs = await getSubscriptions();
@@ -100,8 +110,9 @@ export default async function handler(req, res) {
       // Check against last-notified set to avoid duplicates
       const lastNotifiedKey = `notified:${sub.id}`;
       let lastNotified = new Set();
-      if (kv) {
-        const prev = await kv.get(lastNotifiedKey);
+      const kvInst = await getKv();
+      if (kvInst) {
+        const prev = await kvInst.get(lastNotifiedKey);
         if (prev) lastNotified = new Set(prev);
       }
 
@@ -126,8 +137,8 @@ export default async function handler(req, res) {
 
       // Update last-notified set (keep last 200 IDs to prevent unbounded growth)
       const updatedNotified = [...lastNotified, ...newTasks.map(t => t.id)].slice(-200);
-      if (kv) {
-        await kv.set(lastNotifiedKey, updatedNotified, { ex: 86400 }); // 24h TTL
+      if (kvInst) {
+        await kvInst.set(lastNotifiedKey, updatedNotified, { ex: 86400 }); // 24h TTL
       }
 
     } catch (err) {
