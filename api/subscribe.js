@@ -9,18 +9,20 @@
  * GET /api/subscribe — list subscriptions (admin, for debugging)
  */
 
-let kv = null;
-try {
-  const mod = await import('@vercel/kv');
-  kv = mod.kv;
-} catch {
-  // Vercel KV not available (local dev) — use in-memory fallback
-}
-
-// In-memory fallback for local dev
+// In-memory fallback for local dev / when KV not configured
 const memStore = new Map();
 
+async function getKv() {
+  try {
+    const mod = await import('@vercel/kv');
+    return mod.kv;
+  } catch {
+    return null;
+  }
+}
+
 async function getSubscriptions() {
+  const kv = await getKv();
   if (kv) {
     const subs = await kv.get('push_subscriptions');
     return subs || [];
@@ -29,6 +31,7 @@ async function getSubscriptions() {
 }
 
 async function saveSubscriptions(subs) {
+  const kv = await getKv();
   if (kv) {
     await kv.set('push_subscriptions', subs);
   }
@@ -63,11 +66,11 @@ export default async function handler(req, res) {
         id: subscription.endpoint,
       };
 
-      if (kv) {
-        const subs = await getSubscriptions();
-        // Replace existing sub with same endpoint
-        const filtered = subs.filter(s => s.id !== entry.id);
-        filtered.push(entry);
+      const subs = await getSubscriptions();
+      const filtered = subs.filter(s => s.id !== entry.id);
+      filtered.push(entry);
+      const kvInst = await getKv();
+      if (kvInst) {
         await saveSubscriptions(filtered);
       } else {
         memStore.set(entry.id, entry);
@@ -79,7 +82,8 @@ export default async function handler(req, res) {
       const { endpoint } = req.body;
       if (!endpoint) return res.status(400).json({ error: 'Missing endpoint' });
 
-      if (kv) {
+      const kvInst = await getKv();
+      if (kvInst) {
         const subs = await getSubscriptions();
         await saveSubscriptions(subs.filter(s => s.id !== endpoint));
       } else {
