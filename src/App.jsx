@@ -14,6 +14,7 @@ import {
   searchVersionsForReview, transferNotes, transferEditedNotes,
   getReviewUrl, fetchLatestVersionForTask, fetchLatestVersionForShot,
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
+  cleanAndSortReview,
 } from "./api/ftrack";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1115,6 +1116,9 @@ function ReviewsTab({ userInitial }) {
   const [transferredReviews, setTransferredReviews] = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('transferred_reviews') || '[]')); } catch { return new Set(); }
   });
+  // Clean & sort
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanMsg, setCleanMsg] = useState("");
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
 
@@ -1295,6 +1299,7 @@ function ReviewsTab({ userInitial }) {
     setDetail(null);
     setDetailShots([]);
     setEditMode(false);
+    setCleanMsg("");
     history.back();
   };
 
@@ -1457,6 +1462,43 @@ function ReviewsTab({ userInitial }) {
     }
   };
 
+  const handleCleanAndSort = async () => {
+    if (!detail) return;
+    setCleaning(true);
+    setCleanMsg("");
+    try {
+      const { removed, remaining } = await cleanAndSortReview(detail.id);
+      setCleanMsg(`Removed ${removed}, sorted ${remaining}`);
+      const rsos = await fetchReviewShots(detail.id);
+      setDetailShots(rsos.map(rso => {
+        const task = rso.asset_version?.task;
+        return {
+          id: rso.id,
+          name: rso.asset_version?.asset?.parent?.name || rso.name || 'Unknown',
+          status: task?.status ? {
+            id: task.status.id,
+            name: task.status.name,
+            color: normalizeColor(task.status.color),
+          } : {
+            name: rso.asset_version?.status?.name || 'Unknown',
+            color: normalizeColor(rso.asset_version?.status?.color),
+          },
+          artist: rso.asset_version?.user?.first_name || '',
+          thumb: getThumbnailUrl(rso.asset_version?.thumbnail_id),
+          hasVersion: !!rso.asset_version,
+          versionNum: rso.asset_version?.version || 0,
+          versionId: rso.asset_version?.id,
+          taskId: task?.id || null,
+          taskType: task?.type?.name || '',
+        };
+      }));
+    } catch (err) {
+      setCleanMsg(`Error: ${err.message}`);
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   if (player) return <PlayerScreen shot={player} onClose={closePlayer} shots={detailShots} onSwitch={setPlayer} onStatusChange={(shotId, newStatus) => {
     setDetailShots(prev => prev.map(s => s.id === shotId ? { ...s, status: newStatus } : s));
   }} />;
@@ -1537,6 +1579,12 @@ function ReviewsTab({ userInitial }) {
             <>
               <button className="edit-btn" onClick={() => setBulkMode(true)}>Select</button>
               <button className="edit-btn" onClick={() => setEditMode(true)}>Edit</button>
+              <button
+                className="edit-btn"
+                onClick={handleCleanAndSort}
+                disabled={cleaning}
+                style={{ background: cleaning ? 'var(--card2)' : 'var(--accent)', color: '#fff', opacity: cleaning ? 0.7 : 1 }}
+              >{cleaning ? '…' : 'Clean'}</button>
             </>
           )}
         </div>
@@ -1577,7 +1625,16 @@ function ReviewsTab({ userInitial }) {
                 )}
               </div>
             )}
-
+            {cleanMsg && (
+              <div style={{
+                margin: '8px 16px 0',
+                padding: '8px 12px',
+                borderRadius: 8,
+                background: cleanMsg.startsWith('Error') ? 'rgba(231,76,60,0.15)' : 'rgba(0,151,206,0.15)',
+                color: cleanMsg.startsWith('Error') ? 'var(--red)' : 'var(--accent)',
+                fontSize: 13,
+              }}>{cleanMsg}</div>
+            )}
             <div className="section-label">{detailShots.length} shots</div>
             {detailShots.map(shot => (
               <div key={shot.id} className="shot-row">

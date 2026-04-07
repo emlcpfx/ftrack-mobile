@@ -612,6 +612,56 @@ export async function bulkUpdateTaskStatus(taskIds, statusId) {
   return Promise.all(taskIds.map(id => s.update('Task', [id], { status_id: statusId })));
 }
 
+// ── Clean & Sort Review ───────────────────────────────────────────────────────
+
+const STATUSES_TO_REMOVE = [
+  'Fix',
+  'Editorial Review',
+  'Needs Upload',
+  'Omit',
+  'Omit Prod',
+  'Completed',
+  'Approved for DI',
+];
+
+export async function cleanAndSortReview(reviewSessionId) {
+  const s = getSession();
+
+  const result = await s.query(
+    `select id, asset_version.asset.name, asset_version.task.status.name
+     from ReviewSessionObject
+     where review_session_id is "${reviewSessionId}"`
+  );
+
+  const allItems = result.data;
+  const toRemove = allItems.filter(item =>
+    !item.asset_version ||
+    STATUSES_TO_REMOVE.includes(item.asset_version?.task?.status?.name)
+  );
+
+  for (const item of toRemove) {
+    await s.delete('ReviewSessionObject', [item.id]);
+  }
+
+  const remaining = await s.query(
+    `select id, asset_version.asset.name
+     from ReviewSessionObject
+     where review_session_id is "${reviewSessionId}"`
+  );
+
+  const sorted = [...remaining.data].sort((a, b) => {
+    const nameA = (a.asset_version?.asset?.name || '').toLowerCase();
+    const nameB = (b.asset_version?.asset?.name || '').toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
+
+  for (let i = 0; i < sorted.length; i++) {
+    await s.update('ReviewSessionObject', [sorted[i].id], { sort_order: i });
+  }
+
+  return { removed: toRemove.length, remaining: sorted.length };
+}
+
 // ── Media ─────────────────────────────────────────────────────────────────────
 
 export function getThumbnailUrl(thumbnailId, size = 160) {
