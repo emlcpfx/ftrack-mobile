@@ -525,8 +525,60 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
   // Replies
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
+  // Add to review
+  const [reviewPickerOpen, setReviewPickerOpen] = useState(false);
+  const [reviewList, setReviewList] = useState([]);
+  const [reviewListLoading, setReviewListLoading] = useState(false);
+  const [addingToReview, setAddingToReview] = useState(false);
+  const [newRevName, setNewRevName] = useState('');
+  const [creatingRev, setCreatingRev] = useState(false);
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const openReviewPicker = async () => {
+    if (!shot.versionId) { showToast('No version to add'); return; }
+    setReviewPickerOpen(true);
+    setReviewListLoading(true);
+    try {
+      const revs = await fetchReviews();
+      setReviewList(revs);
+    } catch (err) {
+      showToast('Failed to load reviews');
+    } finally {
+      setReviewListLoading(false);
+    }
+  };
+
+  const addVersionTo = async (review) => {
+    if (addingToReview) return;
+    setAddingToReview(true);
+    try {
+      await addVersionToReview(review.id, shot.versionId, 0);
+      showToast(`Added to "${review.name}"`);
+      setReviewPickerOpen(false);
+    } catch (err) {
+      showToast('Failed: ' + (err.message || 'Could not add'));
+    } finally {
+      setAddingToReview(false);
+    }
+  };
+
+  const createReviewAndAdd = async () => {
+    const name = newRevName.trim();
+    if (!name) return;
+    setCreatingRev(true);
+    try {
+      const result = await createReviewSession(name);
+      const newReview = { id: result.data?.id || result.id, name };
+      setReviewList(prev => [newReview, ...prev]);
+      setNewRevName('');
+      await addVersionTo(newReview);
+    } catch (err) {
+      showToast('Failed to create review');
+    } finally {
+      setCreatingRev(false);
+    }
+  };
 
   const getCurrentFrame = () => {
     const vid = videoRef.current;
@@ -890,6 +942,15 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
               disabled={shots.findIndex(s => s.id === shot.id) === shots.length - 1}>&#9654;</button>
           </div>
         )}
+        {shot.versionId && (
+          <button
+            onClick={openReviewPicker}
+            style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '6px 10px', color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-body)", whiteSpace: 'nowrap' }}
+            title="Add this version to a review"
+          >
+            + Review
+          </button>
+        )}
         <div>
           <StatusPill status={currentStatus} small onClick={() => setStatusPicker(true)} />
         </div>
@@ -1059,6 +1120,55 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
           </div>
         </div>
       </div>
+
+      {/* Review picker modal */}
+      {reviewPickerOpen && (
+        <div
+          onClick={() => !addingToReview && setReviewPickerOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ background: 'var(--surface)', width: '100%', maxWidth: 500, maxHeight: '80vh', borderTopLeftRadius: 16, borderTopRightRadius: 16, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 15, fontWeight: 600 }}>Add v{shot.versionNum} to Review</div>
+              <button onClick={() => !addingToReview && setReviewPickerOpen(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 18, cursor: 'pointer' }}>&#10005;</button>
+            </div>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Create new review</div>
+              <form onSubmit={e => { e.preventDefault(); createReviewAndAdd(); }} style={{ display: 'flex', gap: 8 }}>
+                <input className="search-input" placeholder="Review name..." style={{ flex: 1, margin: 0 }}
+                  value={newRevName} onChange={e => setNewRevName(e.target.value)} disabled={creatingRev || addingToReview} />
+                <button type="submit" className="action-btn" style={{ padding: '8px 16px', whiteSpace: 'nowrap' }}
+                  disabled={creatingRev || addingToReview || !newRevName.trim()}>
+                  {creatingRev ? '...' : 'Create'}
+                </button>
+              </form>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {addingToReview && <div className="loading" style={{ padding: 16 }}>Adding...</div>}
+              {reviewListLoading && <div className="loading" style={{ padding: 16 }}>Loading reviews...</div>}
+              {!reviewListLoading && reviewList.length === 0 && (
+                <div className="empty"><div className="empty-text">No reviews found.</div></div>
+              )}
+              {!reviewListLoading && reviewList.map(rev => (
+                <div key={rev.id} className="shot-list-item"
+                  onClick={() => addVersionTo(rev)}
+                  style={addingToReview ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
+                  <span style={{ fontSize: 18, flexShrink: 0 }}>&#127916;</span>
+                  <div className="shot-list-info">
+                    <div className="shot-list-name">{rev.name}</div>
+                    {rev.created_at && <div className="shot-list-artist">{formatDate(rev.created_at)}</div>}
+                  </div>
+                  <span style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 600 }}>Add</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1931,6 +2041,7 @@ function ShotsTab() {
   const [selectedTask, setSelectedTask] = useState(null);
   // Add to review
   const [reviewPickerOpen, setReviewPickerOpen] = useState(false);
+  const [reviewPickerItems, setReviewPickerItems] = useState(null); // null = use multi-select
   const [reviewList, setReviewList] = useState([]);
   const [reviewListLoading, setReviewListLoading] = useState(false);
   const [addingToReview, setAddingToReview] = useState(false);
@@ -2312,7 +2423,8 @@ function ShotsTab() {
   const selectAll = () => setSelected(new Set(filtered.map(s => s.id)));
   const clearAll = () => { setSelected(new Set()); setMultiSelect(false); };
 
-  const openReviewPicker = async () => {
+  const openReviewPicker = async (itemsOverride = null) => {
+    setReviewPickerItems(itemsOverride);
     setReviewPickerOpen(true);
     setReviewListLoading(true);
     try {
@@ -2328,11 +2440,11 @@ function ShotsTab() {
   const [debugLog, setDebugLog] = useState([]);
   const addLog = (msg) => setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
 
-  const addSelectedToReview = async (review) => {
+  const addSelectedToReview = async (review, itemsOverride = null) => {
     setAddingToReview(true);
     setDebugLog([]);
     try {
-      const selectedItems = shots.filter(s => selected.has(s.id));
+      const selectedItems = itemsOverride || shots.filter(s => selected.has(s.id));
       addLog(`${selectedItems.length} items selected, target: "${review.name}" (${review.id})`);
       let added = 0;
       let skipped = 0;
@@ -2398,6 +2510,7 @@ function ShotsTab() {
 
   // ── Review picker (full screen) ──
   if (reviewPickerOpen) {
+    const pickerCount = reviewPickerItems ? reviewPickerItems.length : selected.size;
     const createAndAdd = async () => {
       const name = newRevName.trim();
       if (!name) return;
@@ -2409,18 +2522,23 @@ function ShotsTab() {
         showToast(`Created "${name}"`);
         setNewRevName('');
         // Auto-add to it
-        await addSelectedToReview(newReview);
+        await addSelectedToReview(newReview, reviewPickerItems);
       } catch (err) {
         showToast('Failed to create review');
         setCreatingRev(false);
       }
     };
 
+    const closePicker = () => {
+      setReviewPickerOpen(false);
+      setReviewPickerItems(null);
+    };
+
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         <div className="header">
-          <div className="back-btn" onClick={() => setReviewPickerOpen(false)}>&#8592; Back</div>
-          <div className="header-title" style={{ fontSize: 15 }}>Add {selected.size} to Review</div>
+          <div className="back-btn" onClick={closePicker}>&#8592; Back</div>
+          <div className="header-title" style={{ fontSize: 15 }}>Add {pickerCount} to Review</div>
         </div>
         <div className="scroll">
           {/* Create new review */}
@@ -2447,7 +2565,7 @@ function ShotsTab() {
           )}
 
           {!reviewListLoading && reviewList.map(rev => (
-            <div key={rev.id} className="shot-list-item" onClick={() => !addingToReview && addSelectedToReview(rev)}
+            <div key={rev.id} className="shot-list-item" onClick={() => !addingToReview && addSelectedToReview(rev, reviewPickerItems)}
               style={addingToReview ? { opacity: 0.5, pointerEvents: 'none' } : {}}>
               <span style={{ fontSize: 18, flexShrink: 0 }}>&#127916;</span>
               <div className="shot-list-info">
@@ -2463,7 +2581,7 @@ function ShotsTab() {
             <div style={{ margin: '12px 16px', padding: 12, background: '#000', borderRadius: 8, fontFamily: 'monospace', fontSize: 10, color: '#0f0', maxHeight: 300, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
               <div style={{ color: '#ff0', marginBottom: 4, fontWeight: 'bold' }}>Debug Log:</div>
               {debugLog.map((line, i) => <div key={i}>{line}</div>)}
-              <button onClick={() => { setReviewPickerOpen(false); setSelected(new Set()); setMultiSelect(false); setDebugLog([]); }}
+              <button onClick={() => { setReviewPickerOpen(false); setReviewPickerItems(null); if (!reviewPickerItems) { setSelected(new Set()); setMultiSelect(false); } setDebugLog([]); }}
                 style={{ marginTop: 8, background: 'var(--accent)', border: 'none', borderRadius: 4, padding: '6px 12px', color: '#fff', fontSize: 11 }}>
                 Done
               </button>
@@ -2740,6 +2858,13 @@ function ShotsTab() {
           <div className="shot-detail-name">{detailShot.name}</div>
           <StatusPill status={detailShot.status} onClick={() => setStatusModal("shot-status")} />
         </div>
+        <button
+          onClick={() => openReviewPicker([detailShot])}
+          style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '8px 12px', color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-body)", whiteSpace: 'nowrap' }}
+          title="Add latest version to review"
+        >
+          + Review
+        </button>
       </div>
 
       <div className="scroll">
