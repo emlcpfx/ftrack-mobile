@@ -44,6 +44,14 @@ const publishExtraCss = `
   .ae-file-match.pending { color:var(--amber); }
   .ae-file-match.uploading { color:var(--accent); }
   .ae-file-match.done { color:var(--green); }
+  .ae-prog {
+    margin-top:4px; height:3px; border-radius:2px; background:var(--border);
+    overflow:hidden;
+  }
+  .ae-prog > span {
+    display:block; height:100%; background:var(--accent);
+    transition:width .15s ease-out;
+  }
   .ae-warn { color:var(--amber); font-size:12px; margin-top:6px; }
 `;
 
@@ -414,7 +422,7 @@ export default function AePublish() {
       for (let i = 0; i < queue.length; i++) {
         const item = queue[i];
         const { shot, task, parsed } = item.match;
-        patchFile(item.id, { status: 'uploading', uploadError: '' });
+        patchFile(item.id, { status: 'uploading', uploadError: '', progress: 0 });
         setPublishMsg(
           `Uploading ${i + 1}/${queue.length}: ${item.name} → ${shot.name} / ${task.type || task.name}…`,
         );
@@ -426,12 +434,23 @@ export default function AePublish() {
             file: item.file,
             version: parsed?.version,
             setTaskStatusId: qcReady?.id,
+            onProgress: ({ percent, phase }) => {
+              patchFile(item.id, { progress: percent, progressPhase: phase });
+              const label = phase === 'prepare'
+                ? 'Preparing'
+                : phase === 'encode'
+                  ? 'Finishing'
+                  : 'Uploading';
+              setPublishMsg(
+                `${label} ${i + 1}/${queue.length}: ${item.name} · ${percent}%`,
+              );
+            },
           });
           succeeded.push({ id: item.id, ...published, shotName: shot.name });
           if (published.statusWarning) {
             statusFails.push(`${item.name}: ${published.statusWarning}`);
           }
-          patchFile(item.id, { status: 'done', uploadError: '' });
+          patchFile(item.id, { status: 'done', uploadError: '', progress: 100 });
         } catch (e) {
           const msg = formatPublishError(e);
           console.error('[publish] file failed:', item.name, e);
@@ -579,7 +598,13 @@ export default function AePublish() {
                   let matchText = resolving || !m ? 'Matching…' : '';
                   if (f.status === 'uploading') {
                     matchClass = 'uploading';
-                    matchText = 'Uploading…';
+                    const pct = typeof f.progress === 'number' ? f.progress : 0;
+                    const phase = f.progressPhase === 'prepare'
+                      ? 'Preparing'
+                      : f.progressPhase === 'encode'
+                        ? 'Finishing'
+                        : 'Uploading';
+                    matchText = `${phase} ${pct}%`;
                   } else if (f.status === 'done') {
                     matchClass = 'done';
                     matchText = 'Published';
@@ -608,6 +633,11 @@ export default function AePublish() {
                         </button>
                       </div>
                       <div className={`ae-file-match ${matchClass}`}>{matchText}</div>
+                      {f.status === 'uploading' && (
+                        <div className="ae-prog" aria-hidden>
+                          <span style={{ width: `${Math.max(2, f.progress || 0)}%` }} />
+                        </div>
+                      )}
                     </div>
                   );
                 })}

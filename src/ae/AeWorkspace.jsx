@@ -815,7 +815,9 @@ export default function AeWorkspace({ focusRequest = null, onFocusHandled }) {
                   </button>
                 </div>
                 {!version && (
-                  <div className="ae-error">No published version on this shot/task.</div>
+                  <div className="ae-meta" style={{ marginTop: 6 }}>
+                    Import needs a published version on this task.
+                  </div>
                 )}
                 {version && !hasOriginal && hasProxy && (
                   <div className="ae-meta" style={{ marginTop: 6 }}>
@@ -823,7 +825,9 @@ export default function AeWorkspace({ focusRequest = null, onFocusHandled }) {
                   </div>
                 )}
                 {version && !hasOriginal && !hasProxy && (
-                  <div className="ae-error">Version has no importable components.</div>
+                  <div className="ae-meta" style={{ marginTop: 6 }}>
+                    This version has no importable media components.
+                  </div>
                 )}
               </div>
             </div>

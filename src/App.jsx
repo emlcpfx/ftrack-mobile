@@ -3,24 +3,28 @@ import {
   createSession,
   fetchReviews, fetchReviewShots, fetchReviewThumbnails, fetchTaskStatusesByShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
-  fetchProjectMembers, assignUserToShots, unassignUserFromShots,
   fetchTaskTypes, createTaskOnShot, fetchTasksForShot,
+  fetchProjectMembers, assignUserToShots, unassignUserFromShots,
+  setTaskAssignee, assignUserToTask, getCurrentUserId,
+  pickAeImportComponent,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
   bulkUpdateTaskStatus, bulkUpdateVersionStatus,
   createNote as apiCreateNote, createReply as apiCreateReply,
   fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories, fetchNoteCounts,
-  getThumbnailUrl, getComponentUrl, getPlayableComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
+  getThumbnailUrl, getComponentUrl, getPlayableComponentUrl, getProxiedComponentUrl,
+  fetchVersionComponents,
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
   getReviewUrl, fetchLatestVersionForTask, fetchLatestVersionForShot,
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
   cleanAndSortReview,
 } from "./api/ftrack";
-import { isAePanel } from "./ae/bridge.js";
-import AeWorkspace from "./ae/AeWorkspace.jsx";
+import { isAePanel, downloadAndImport } from "./ae/bridge.js";
 import AePublish from "./ae/AePublish.jsx";
 import AeAlerts from "./ae/AeAlerts.jsx";
+import AeCompBar from "./ae/AeCompBar.jsx";
+import { useAeCompMatch } from "./ae/useAeCompMatch.js";
 import { runClientGeminiChat } from "./chat/clientChat.js";
 import { resolveAeProject, persistSharedProjectId } from "./ae/projectContext.js";
 import { fetchAeAlerts } from "./ae/alerts.js";
@@ -2131,7 +2135,7 @@ function ReviewsTab({ userInitial }) {
 }
 
 // ─── Shots Tab ────────────────────────────────────────────────────────────────
-function ShotsTab() {
+function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(() => {
     try { return sessionStorage.getItem('ftrack_shots_project') || null; } catch { return null; }
@@ -2174,9 +2178,44 @@ function ShotsTab() {
   const [taskTypes, setTaskTypes] = useState([]);
   const [creatingTask, setCreatingTask] = useState(false);
   const [detailTasks, setDetailTasks] = useState([]); // tasks for open shot
+  const [meId, setMeId] = useState(null);
+  const [importBusy, setImportBusy] = useState('');
+  const [importComponents, setImportComponents] = useState([]);
+  const [importVersionMeta, setImportVersionMeta] = useState(null);
+  const [assignBusy, setAssignBusy] = useState('');
+  const [debugLog, setDebugLog] = useState([]);
   const saveViewName = useRef('');
+  const shotsRef = useRef([]);
+  const detailShotRef = useRef(null);
+  const openShotDetailRef = useRef(null);
+  const applyMatchedShotRef = useRef(() => {});
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
+
+  const memberLabel = (m) => {
+    if (!m) return '';
+    const name = [m.first_name, m.last_name].filter(Boolean).join(' ');
+    return name || m.username || m.email || m.id;
+  };
+
+  const inAe = isAePanel();
+
+  const {
+    comp: aeComp,
+    matching: aeMatching,
+    matches: aeMatches,
+    matchError: aeMatchError,
+    forceRematch: aeForceRematch,
+    clearMatches: aeClearMatches,
+  } = useAeCompMatch(selectedProjectId, {
+    enabled: inAe,
+    onAutoMatch: (shot) => applyMatchedShotRef.current(shot),
+  });
+
+  useEffect(() => {
+    if (!inAe) return;
+    setMeId(getCurrentUserId());
+  }, [inAe]);
 
   // Load projects and statuses on mount (separately so one failing doesn't block the other)
   useEffect(() => {
@@ -2347,6 +2386,9 @@ function ShotsTab() {
       .finally(() => setShotsLoading(false));
   }, [selectedProjectId]);
 
+  shotsRef.current = shots;
+  detailShotRef.current = detailShot;
+
   // Compute unique values for each filterable field
   const filterOptions = useMemo(() => {
     const statusSet = new Map();
@@ -2456,6 +2498,8 @@ function ShotsTab() {
 
   const openShotDetail = async (shot) => {
     setDetailShot(shot);
+    setImportComponents([]);
+    setImportVersionMeta(null);
     const shotId = shot.shotId || shot.id;
     const siblingTasks = shot.tasks?.length
       ? shot.tasks
@@ -2477,8 +2521,8 @@ function ShotsTab() {
       setVersionsLoading(true);
       try {
         const isTask = !!shot.type; // tasks have a type like "Compositing"
-        const vers = await fetchShotVersions(shot.shotId, isTask ? shot.id : null);
-        setVersions(vers.map(v => ({
+        const vers = await fetchShotVersions(shot.shotId || shotId, isTask ? shot.id : null);
+        const mapped = vers.map(v => ({
           id: v.id,
           version: v.version,
           status: {
@@ -2490,12 +2534,189 @@ function ShotsTab() {
           date: formatDate(v.date),
           thumb: getThumbnailUrl(v.thumbnail_id),
           taskId: v.task_id || null,
-        })));
+        }));
+        setVersions(mapped);
+        if (inAe && mapped[0]) {
+          setImportVersionMeta(mapped[0]);
+          try {
+            const comps = await fetchVersionComponents(mapped[0].id);
+            setImportComponents(comps || []);
+          } catch {
+            setImportComponents([]);
+          }
+        }
       } catch (err) {
         showToast('Failed to load versions');
       } finally {
         setVersionsLoading(false);
       }
+    }
+  };
+  openShotDetailRef.current = openShotDetail;
+
+  applyMatchedShotRef.current = (ftrackShot) => {
+    if (!ftrackShot?.id) return;
+    const shotId = ftrackShot.id;
+    const open = detailShotRef.current;
+    if (open && (open.shotId === shotId || open.id === shotId)) return;
+
+    const candidates = shotsRef.current.filter((s) => s.shotId === shotId);
+    const prefer =
+      candidates.find((s) => /comp/i.test(s.type || '')) ||
+      candidates[0];
+    if (prefer) {
+      openShotDetail(prefer);
+      return;
+    }
+    openShotDetail({
+      id: shotId,
+      shotId,
+      name: ftrackShot.name,
+      type: '',
+      status: {
+        id: ftrackShot.status?.id,
+        name: ftrackShot.status?.name || 'Unknown',
+        color: normalizeColor(ftrackShot.status?.color),
+      },
+      thumb: getThumbnailUrl(ftrackShot.thumbnail_id),
+      artist: '',
+      tasks: [],
+      assigneeIds: [],
+    });
+  };
+
+  // Alerts → open shot/task in Shots
+  useEffect(() => {
+    if (!focusRequest?.shotId) return;
+    if (focusRequest.projectId && focusRequest.projectId !== selectedProjectId) {
+      setSelectedProjectId(focusRequest.projectId);
+      persistSharedProjectId(focusRequest.projectId);
+      return; // wait for shots reload
+    }
+    if (shotsLoading) return;
+
+    const candidates = shots.filter((s) => s.shotId === focusRequest.shotId);
+    const prefer = focusRequest.taskId
+      ? (candidates.find((s) => s.id === focusRequest.taskId) || candidates[0])
+      : (candidates.find((s) => /comp/i.test(s.type || '')) || candidates[0]);
+
+    if (prefer) {
+      openShotDetail(prefer);
+    } else {
+      openShotDetail({
+        id: focusRequest.taskId || focusRequest.shotId,
+        shotId: focusRequest.shotId,
+        name: focusRequest.shotName || focusRequest.shotId,
+        type: '',
+        status: { id: null, name: 'Unknown', color: '#6b7280' },
+        thumb: null,
+        artist: '',
+        tasks: [],
+        assigneeIds: [],
+      });
+    }
+    onFocusHandled?.();
+  }, [focusRequest, selectedProjectId, shots, shotsLoading]);
+
+  const doAeImport = async (mode) => {
+    if (!inAe) return;
+    const component = pickAeImportComponent(importComponents, mode);
+    if (!component) {
+      showToast(
+        mode === 'original'
+          ? 'No original media on this version'
+          : 'No proxy on this version',
+      );
+      return;
+    }
+    const url = getComponentUrl(component.id);
+    if (!url) {
+      showToast('Could not resolve component URL');
+      return;
+    }
+    setImportBusy(mode);
+    try {
+      const label = importVersionMeta?.version != null
+        ? `${detailShot?.name}_v${importVersionMeta.version}`
+        : (component.name || detailShot?.name || 'ftrack');
+      const result = await downloadAndImport(url, {
+        name: label,
+        fileType: component.file_type || '',
+        intoActiveComp: true,
+      });
+      if (!result.ok) throw new Error(result.error || 'Import failed');
+      showToast(
+        result.addedLayer
+          ? `Imported → layer "${result.layerName || result.name}"`
+          : `Imported "${result.name}"`,
+      );
+    } catch (e) {
+      showToast(e.message || String(e));
+    } finally {
+      setImportBusy('');
+    }
+  };
+
+  const onTaskAssigneeChange = async (taskId, userId) => {
+    if (!taskId) return;
+    setAssignBusy(taskId);
+    try {
+      await setTaskAssignee(taskId, userId || null);
+      const user = members.find((m) => m.id === userId);
+      setDetailTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? {
+                ...t,
+                assigneeIds: userId ? [userId] : [],
+                assignee: user ? memberLabel(user) : '',
+              }
+            : t,
+        ),
+      );
+      setShots((prev) =>
+        prev.map((s) =>
+          s.id === taskId
+            ? {
+                ...s,
+                assigneeIds: userId ? [userId] : [],
+                artist: user ? memberLabel(user) : '',
+              }
+            : s,
+        ),
+      );
+      showToast(userId ? `Assigned → ${memberLabel(user)}` : 'Unassigned');
+    } catch (e) {
+      showToast(e.message || String(e));
+    } finally {
+      setAssignBusy('');
+    }
+  };
+
+  const assignTaskToMe = async (taskId) => {
+    if (!taskId || !meId) return;
+    setAssignBusy(taskId);
+    try {
+      await assignUserToTask(taskId, meId);
+      const user = members.find((m) => m.id === meId);
+      setDetailTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          const ids = t.assigneeIds?.includes(meId)
+            ? t.assigneeIds
+            : [...(t.assigneeIds || []), meId];
+          return {
+            ...t,
+            assigneeIds: ids,
+            assignee: memberLabel(user) || 'Me',
+          };
+        }),
+      );
+      showToast('Assigned to you');
+    } catch (e) {
+      showToast(e.message || String(e));
+    } finally {
+      setAssignBusy('');
     }
   };
 
@@ -2690,7 +2911,6 @@ function ShotsTab() {
     }
   };
 
-  const [debugLog, setDebugLog] = useState([]);
   const addLog = (msg) => setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
 
   const addSelectedToReview = async (review, itemsOverride = null) => {
@@ -3118,13 +3338,28 @@ function ShotsTab() {
   }
 
   // ── Shot detail view ──
-  if (detailShot) return (
+  if (detailShot) {
+    const hasOriginal = inAe && !!pickAeImportComponent(importComponents, 'original');
+    const hasProxy = inAe && !!pickAeImportComponent(importComponents, 'proxy');
+    return (
     <div className="shot-detail" style={{ position: "relative" }}>
       <Toast msg={toast} />
       <div className="header">
-        <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); setDetailTasks([]); }}>&#8592; Shots</div>
+        <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); setDetailTasks([]); setImportComponents([]); setImportVersionMeta(null); }}>&#8592; Shots</div>
         <div className="header-title" style={{ fontSize: 15 }}>{detailShot.name}</div>
       </div>
+
+      {inAe && (
+        <AeCompBar
+          comp={aeComp}
+          matching={aeMatching}
+          matchError={aeMatchError}
+          matches={aeMatches}
+          onMatch={aeForceRematch}
+          onPickMatch={(s) => { aeClearMatches(); applyMatchedShotRef.current(s); }}
+          onDismissMatches={aeClearMatches}
+        />
+      )}
 
       <div className="shot-detail-hero">
         {detailShot.thumb
@@ -3145,6 +3380,55 @@ function ShotsTab() {
       </div>
 
       <div className="scroll">
+        {inAe && (
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+            <div className="section-label" style={{ padding: 0, marginBottom: 8 }}>Import to AE</div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                disabled={!hasOriginal || !!importBusy}
+                onClick={() => doAeImport('original')}
+                style={{
+                  flex: 1, background: hasOriginal ? 'var(--accent)' : 'var(--card2)', border: 'none',
+                  borderRadius: 8, padding: '10px 0', color: '#fff', fontSize: 12, fontWeight: 600,
+                  cursor: hasOriginal && !importBusy ? 'pointer' : 'default', fontFamily: 'inherit',
+                  opacity: !hasOriginal || importBusy ? 0.55 : 1,
+                }}
+              >
+                {importBusy === 'original' ? 'Importing…' : 'Import Original'}
+              </button>
+              <button
+                type="button"
+                disabled={!hasProxy || !!importBusy}
+                onClick={() => doAeImport('proxy')}
+                style={{
+                  flex: 1, background: 'transparent', border: '1px solid var(--border)',
+                  borderRadius: 8, padding: '10px 0', color: 'var(--accent)', fontSize: 12, fontWeight: 600,
+                  cursor: hasProxy && !importBusy ? 'pointer' : 'default', fontFamily: 'inherit',
+                  opacity: !hasProxy || importBusy ? 0.55 : 1,
+                }}
+              >
+                {importBusy === 'proxy' ? 'Importing…' : 'Import Proxy'}
+              </button>
+            </div>
+            {!importVersionMeta && !versionsLoading && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+                Import needs a published version on this task.
+              </div>
+            )}
+            {importVersionMeta && !hasOriginal && hasProxy && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
+                No original media — use Import Proxy for the review MP4.
+              </div>
+            )}
+            {importVersionMeta && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                Using v{importVersionMeta.version}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>Tasks ({detailTasks.length})</span>
           <button
@@ -3165,26 +3449,63 @@ function ShotsTab() {
           </div>
         )}
         {detailTasks.map((t) => (
-          <div key={t.id} className="shot-list-item" style={{ cursor: 'default' }}>
-            <div className="shot-list-info">
-              <div className="shot-list-name">{t.type || t.name}</div>
-              {t.assignee && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{t.assignee}</div>}
+          <div key={t.id} className="shot-list-item" style={{ cursor: 'default', flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%' }}>
+              <div className="shot-list-info" style={{ flex: 1 }}>
+                <div className="shot-list-name">{t.type || t.name}</div>
+                {t.assignee && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{t.assignee}</div>}
+              </div>
+              <div className="shot-list-status" style={{ flexShrink: 0 }}>
+                <StatusPill
+                  status={{ ...t.status, color: normalizeColor(t.status?.color) }}
+                  small
+                  onClick={() => {
+                    setEditingTask({
+                      shotId: detailShot.shotId || detailShot.id,
+                      taskId: t.id,
+                      taskName: t.type || t.name,
+                      currentStatusId: t.status?.id,
+                    });
+                    setStatusModal('task-status');
+                  }}
+                />
+              </div>
             </div>
-            <div className="shot-list-status" style={{ flexShrink: 0 }}>
-              <StatusPill
-                status={{ ...t.status, color: normalizeColor(t.status?.color) }}
-                small
-                onClick={() => {
-                  setEditingTask({
-                    shotId: detailShot.shotId || detailShot.id,
-                    taskId: t.id,
-                    taskName: t.type || t.name,
-                    currentStatusId: t.status?.id,
-                  });
-                  setStatusModal('task-status');
-                }}
-              />
-            </div>
+            {inAe && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%' }}>
+                <select
+                  value={t.assigneeIds?.[0] || ''}
+                  disabled={assignBusy === t.id}
+                  onChange={(e) => onTaskAssigneeChange(t.id, e.target.value)}
+                  style={{
+                    flex: 1, background: 'var(--card2)', border: '1px solid var(--border)',
+                    borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 11,
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <option value="">Unassigned</option>
+                  {members.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {memberLabel(m)}{m.id === meId ? ' (me)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {meId && !t.assigneeIds?.includes(meId) && (
+                  <button
+                    type="button"
+                    disabled={assignBusy === t.id}
+                    onClick={() => assignTaskToMe(t.id)}
+                    style={{
+                      background: 'transparent', border: '1px solid var(--border)', borderRadius: 6,
+                      padding: '6px 8px', color: 'var(--accent)', fontSize: 10, fontWeight: 600,
+                      cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Me
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         ))}
 
@@ -3210,6 +3531,7 @@ function ShotsTab() {
       {/* Status Modal for shot */}
     </div>
   );
+  }
 
   // ── Shot list view ──
   return (
@@ -3227,7 +3549,34 @@ function ShotsTab() {
           </>
         ) : (
           <>
-            <BrandLogo />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, marginRight: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', flexShrink: 0 }}>Project:</span>
+              {projects.length > 0 ? (
+                <select
+                  value={selectedProjectId || ''}
+                  onChange={(e) => setSelectedProjectId(e.target.value)}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    background: 'var(--bg)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                    padding: '5px 8px',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: 'var(--text)',
+                    fontFamily: 'inherit',
+                    outline: 'none',
+                  }}
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <BrandLogo />
+              )}
+            </div>
             <div className="header-right">
               <button style={{ background: "none", border: "none", color: "var(--muted)", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 500 }} onClick={() => setMultiSelect(true)}>Select</button>
             </div>
@@ -3235,27 +3584,24 @@ function ShotsTab() {
         )}
       </div>
 
+      {inAe && (
+        <AeCompBar
+          comp={aeComp}
+          matching={aeMatching}
+          matchError={aeMatchError}
+          matches={aeMatches}
+          onMatch={aeForceRematch}
+          onPickMatch={(s) => { aeClearMatches(); applyMatchedShotRef.current(s); }}
+          onDismissMatches={aeClearMatches}
+        />
+      )}
+
       {/* Bulk action bar */}
       {multiSelect && selected.size > 0 && (
         <div style={{ display: 'flex', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
           <button style={{ flex: 1, background: "var(--accent)", border: "none", borderRadius: 6, padding: '10px 0', color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("bulk")}>Status</button>
           <button style={{ flex: 1, background: "var(--accent)", border: "none", borderRadius: 6, padding: '10px 0', color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={() => setStatusModal("assignee")}>Assign</button>
           <button style={{ flex: 1, background: "var(--accent)", border: "none", borderRadius: 6, padding: '10px 0', color: "#fff", fontSize: 13, cursor: "pointer", fontFamily: "var(--font-body)", fontWeight: 600 }} onClick={openReviewPicker}>+ Review</button>
-        </div>
-      )}
-
-      {/* Project Picker */}
-      {projects.length > 1 && (
-        <div className="project-bar">
-          <select
-            className="project-picker"
-            value={selectedProjectId || ''}
-            onChange={e => setSelectedProjectId(e.target.value)}
-          >
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
         </div>
       )}
 
@@ -3944,15 +4290,19 @@ export default function App() {
   const [auth, setAuth] = useState(null);
   const [tab, setTab] = useState(() => {
     try {
-      if (isAePanel()) return sessionStorage.getItem('ftrack_tab') || 'ae';
+      if (isAePanel()) {
+        const saved = sessionStorage.getItem('ftrack_tab');
+        if (saved === 'ae') return 'shots';
+        return saved || 'shots';
+      }
       return sessionStorage.getItem('ftrack_tab') || 'reviews';
     } catch {
-      return isAePanel() ? 'ae' : 'reviews';
+      return isAePanel() ? 'shots' : 'reviews';
     }
   });
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
-  const [aeFocus, setAeFocus] = useState(null);
+  const [shotsFocus, setShotsFocus] = useState(null);
   const [restoring, setRestoring] = useState(true);
 
   // Persist active tab
@@ -3960,9 +4310,10 @@ export default function App() {
     try { sessionStorage.setItem('ftrack_tab', tab); } catch {}
   }, [tab]);
 
-  // Browser shouldn't stay on AE / Publish tabs
+  // AE tab retired → Shots; browser shouldn't stay on Publish
   useEffect(() => {
-    if (!inAe && (tab === 'ae' || tab === 'publish')) setTab('reviews');
+    if (tab === 'ae') setTab('shots');
+    else if (!inAe && tab === 'publish') setTab('reviews');
   }, [inAe, tab]);
 
   // AE: poll assigned "needs work" tasks across all projects for bell badge
@@ -4042,9 +4393,9 @@ export default function App() {
                 onClose={() => setShowNotifSettings(false)}
                 onCountChange={setAlertCount}
                 onOpenAlert={(focus) => {
-                  setAeFocus({ ...focus, _ts: Date.now() });
+                  setShotsFocus({ ...focus, _ts: Date.now() });
                   setShowNotifSettings(false);
-                  setTab('ae');
+                  setTab('shots');
                 }}
               />
             ) : (
@@ -4052,15 +4403,14 @@ export default function App() {
             )
           ) : (
             <>
-              {tab === "ae" && inAe && (
-                <AeWorkspace
-                  focusRequest={aeFocus}
-                  onFocusHandled={() => setAeFocus(null)}
-                />
-              )}
               {tab === "publish" && inAe && <AePublish />}
               {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
-              {tab === "shots" && <ShotsTab />}
+              {tab === "shots" && (
+                <ShotsTab
+                  focusRequest={shotsFocus}
+                  onFocusHandled={() => setShotsFocus(null)}
+                />
+              )}
               {tab === "chat" && <ChatTab />}
             </>
           )}
@@ -4068,12 +4418,6 @@ export default function App() {
         <div className="bottom-nav">
           {inAe ? (
             <>
-              <div className={`nav-item ${tab === "ae" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("ae"); }}>
-                <div className="nav-icon">
-                  <img src={`${import.meta.env.BASE_URL}ae-logo.png`} alt="AE" />
-                </div>
-                <div className="nav-label">AE</div>
-              </div>
               <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("shots"); }}>
                 <div className="nav-icon">&#127902;</div>
                 <div className="nav-label">Shots</div>

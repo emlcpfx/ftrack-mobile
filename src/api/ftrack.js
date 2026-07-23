@@ -33,6 +33,7 @@ export async function publishFileToTask({
   assetName,
   version: forcedVersion,
   setTaskStatusId,
+  onProgress,
 } = {}) {
   if (!taskId || !shotId) throw new Error('Need a matched shot and task to publish');
   if (!file) throw new Error('No file to publish');
@@ -43,12 +44,24 @@ export async function publishFileToTask({
   const s = getSession();
   if (!s) throw new Error('Not logged in to ftrack');
 
+  const report = (pct, phase = 'upload') => {
+    if (typeof onProgress === 'function') {
+      try {
+        onProgress({ percent: Math.max(0, Math.min(100, Math.round(pct))), phase });
+      } catch {
+        /* ignore UI callback errors */
+      }
+    }
+  };
+
   const baseName = assetName
     || String(file.name || 'upload')
       .replace(/\.[^.]+$/, '')
       .replace(/_v\d+(?:_[LR]T)?$/i, '');
 
   try {
+    report(0, 'prepare');
+
     // Asset type
     let typeResult = await s.query(`select id, name from AssetType where name is "Upload"`);
     let assetType = typeResult.data[0];
@@ -116,9 +129,11 @@ export async function publishFileToTask({
 
     let componentId = null;
     try {
+      report(0, 'upload');
       const componentResults = await s.createComponent(file, {
         name: file.name || `${baseName}.mov`,
         data: { version_id: versionId },
+        onProgress: (pct) => report(pct, 'upload'),
       });
       const compResult = Array.isArray(componentResults)
         ? componentResults[0]
@@ -127,6 +142,7 @@ export async function publishFileToTask({
       if (!componentId) {
         throw new Error('createComponent returned no component id');
       }
+      report(100, 'upload');
     } catch (uploadErr) {
       // Best-effort cleanup so we don't leave empty versions
       try {
@@ -141,6 +157,7 @@ export async function publishFileToTask({
 
     if (componentId) {
       try {
+        report(100, 'encode');
         await s.call([
           {
             action: 'encode_media',

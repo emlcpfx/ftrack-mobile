@@ -4,13 +4,19 @@
  */
 
 export function normalizeShotToken(name) {
-  return String(name || '')
+  let s = String(name || '')
     .trim()
-    .replace(/\.(aep|aepx)$/i, '')
-    .replace(/[_\s.-]*(comp|precomp|pre-comp|main|master|work|wip)[_\s.-]*$/i, '')
-    .replace(/[_\s.-]*v\d+[_\s.-]*$/i, '')
-    .replace(/\s+/g, '_')
-    .toLowerCase();
+    .replace(/\.(aep|aepx)$/i, '');
+  // Strip trailing dept / version tokens repeatedly: FOO_comp_v002 → FOO
+  const trail =
+    /[_\s.-]+(comp|precomp|pre-comp|compositing|main|master|work|wip|roto|paint|track|fx|cg|ab)[_\s.-]*$/i;
+  const ver = /[_\s.-]*v\d+[_\s.-]*$/i;
+  for (let i = 0; i < 6; i++) {
+    const next = s.replace(trail, '').replace(ver, '');
+    if (next === s) break;
+    s = next;
+  }
+  return s.replace(/\s+/g, '_').toLowerCase();
 }
 
 /** Show/job code from AE filename or comp: LLL_FA_070 → "lll" */
@@ -38,20 +44,32 @@ export function scoreShotMatch(compName, shotName) {
   if (cn === sn) return 90;
   if (cn.startsWith(sn + '_') || sn.startsWith(cn + '_')) return 75;
   if (cn.startsWith(sn) || sn.startsWith(cn)) return 70;
-  if (cn.includes(sn) || sn.includes(cn)) return 50;
+  if (cn.includes(sn) || sn.includes(cn)) return 55;
 
-  const ct = cn.split(/[_\-.]+/)[0];
-  const st = sn.split(/[_\-.]+/)[0];
-  if (ct && st && ct === st && ct.length >= 3) return 60;
+  // Require ≥2 shared tokens (avoid every LLL_* scoring 60)
+  const ct = cn.split(/[_\-.]+/).filter(Boolean);
+  const st = sn.split(/[_\-.]+/).filter(Boolean);
+  let shared = 0;
+  for (let i = 0; i < Math.min(ct.length, st.length); i++) {
+    if (ct[i] === st[i]) shared++;
+    else break;
+  }
+  if (shared >= 3) return 65;
+  if (shared >= 2 && ct.length >= 2 && st.length >= 2) return 50;
 
   return 0;
 }
 
 export function rankShotMatches(compName, shots) {
-  return (shots || [])
+  const ranked = (shots || [])
     .map((shot) => ({ shot, score: scoreShotMatch(compName, shot.name) }))
     .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || a.shot.name.localeCompare(b.shot.name));
+
+  if (!ranked.length) return ranked;
+  const top = ranked[0].score;
+  // Drop weak near-misses that only share show code
+  return ranked.filter((x) => x.score >= 70 || x.score >= top - 10);
 }
 
 export function searchTokenFromComp(compName) {
