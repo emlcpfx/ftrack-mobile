@@ -251,8 +251,8 @@ export default function AePublish() {
           skipped.push(`${file.name || 'file'} (empty)`);
           continue;
         }
-        if (isLargeFile(file)) {
-          warnings.push(`${file.name} is very large — CEP may run out of memory`);
+        if (isLargeFile(file) && !(file._aePath || file.path)) {
+          warnings.push(`${file.name} is very large — browser upload may be slow`);
         }
         const key = fileKey(file);
         if (next.some((f) => f.id === key)) continue;
@@ -434,13 +434,13 @@ export default function AePublish() {
             file: item.file,
             version: parsed?.version,
             setTaskStatusId: qcReady?.id,
-            onProgress: ({ percent, phase }) => {
+            onProgress: ({ percent, phase, msg }) => {
               patchFile(item.id, { progress: percent, progressPhase: phase });
               const label = phase === 'prepare'
                 ? 'Preparing'
                 : phase === 'encode'
                   ? 'Finishing'
-                  : 'Uploading';
+                  : (msg || 'Uploading');
               setPublishMsg(
                 `${label} ${i + 1}/${queue.length}: ${item.name} · ${percent}%`,
               );

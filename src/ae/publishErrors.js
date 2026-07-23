@@ -35,13 +35,15 @@ export function formatPublishError(err, context = '') {
 
 export function isEmptyOrTinyFile(file) {
   if (!file) return true;
-  if (typeof file.size === 'number' && file.size <= 0) return true;
+  const size = file._aeSize ?? file.size;
+  if (typeof size === 'number' && size <= 0) return true;
   return false;
 }
 
-/** Soft warn threshold — CEP loads whole file into memory via File/Blob. */
+/** Soft warn threshold — browser XHR path still loads into memory. */
 export const LARGE_FILE_BYTES = 1500 * 1024 * 1024; // ~1.5 GB
 
 export function isLargeFile(file) {
-  return !!(file && typeof file.size === 'number' && file.size >= LARGE_FILE_BYTES);
+  const size = file?._aeSize ?? file?.size;
+  return !!(file && typeof size === 'number' && size >= LARGE_FILE_BYTES);
 }

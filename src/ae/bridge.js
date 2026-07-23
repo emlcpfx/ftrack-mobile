@@ -183,15 +183,27 @@ export function launchFtrackUploader(filePaths, opts = {}) {
   }
 }
 
-/** Read a local path into a browser File (for CEP Node → createComponent). */
+/** Read a local path into a browser File stub (keeps disk path — no full RAM read). */
 export async function fileFromPath(filePath) {
   const fs = nodeRequire('fs');
   const path = nodeRequire('path');
   if (!fs.existsSync(filePath)) {
     throw new Error(`File not found: ${filePath}`);
   }
-  const buf = fs.readFileSync(filePath);
+  const stat = fs.statSync(filePath);
   const name = path.basename(filePath);
-  // Blob/File available in CEP Chromium
-  return new File([buf], name);
+  // Empty blob + real size/path — upload goes through Python encode_media, not XHR
+  const file = new File([new Uint8Array(0)], name, {
+    type: 'application/octet-stream',
+    lastModified: stat.mtimeMs || Date.now(),
+  });
+  try {
+    Object.defineProperty(file, 'size', { value: stat.size, configurable: true });
+  } catch {
+    /* some environments seal size */
+  }
+  file._aePath = filePath;
+  file.path = filePath;
+  file._aeSize = stat.size;
+  return file;
 }

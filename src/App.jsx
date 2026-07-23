@@ -3380,55 +3380,6 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
       </div>
 
       <div className="scroll">
-        {inAe && (
-          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-            <div className="section-label" style={{ padding: 0, marginBottom: 8 }}>Import to AE</div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button
-                type="button"
-                disabled={!hasOriginal || !!importBusy}
-                onClick={() => doAeImport('original')}
-                style={{
-                  flex: 1, background: hasOriginal ? 'var(--accent)' : 'var(--card2)', border: 'none',
-                  borderRadius: 8, padding: '10px 0', color: '#fff', fontSize: 12, fontWeight: 600,
-                  cursor: hasOriginal && !importBusy ? 'pointer' : 'default', fontFamily: 'inherit',
-                  opacity: !hasOriginal || importBusy ? 0.55 : 1,
-                }}
-              >
-                {importBusy === 'original' ? 'Importing…' : 'Import Original'}
-              </button>
-              <button
-                type="button"
-                disabled={!hasProxy || !!importBusy}
-                onClick={() => doAeImport('proxy')}
-                style={{
-                  flex: 1, background: 'transparent', border: '1px solid var(--border)',
-                  borderRadius: 8, padding: '10px 0', color: 'var(--accent)', fontSize: 12, fontWeight: 600,
-                  cursor: hasProxy && !importBusy ? 'pointer' : 'default', fontFamily: 'inherit',
-                  opacity: !hasProxy || importBusy ? 0.55 : 1,
-                }}
-              >
-                {importBusy === 'proxy' ? 'Importing…' : 'Import Proxy'}
-              </button>
-            </div>
-            {!importVersionMeta && !versionsLoading && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-                Import needs a published version on this task.
-              </div>
-            )}
-            {importVersionMeta && !hasOriginal && hasProxy && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>
-                No original media — use Import Proxy for the review MP4.
-              </div>
-            )}
-            {importVersionMeta && (
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                Using v{importVersionMeta.version}
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>Tasks ({detailTasks.length})</span>
           <button
@@ -3508,6 +3459,67 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
             )}
           </div>
         ))}
+
+        {inAe && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              flexWrap: 'wrap',
+              padding: '8px 16px 10px',
+              borderBottom: '1px solid var(--border)',
+            }}
+          >
+            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', letterSpacing: 0.3 }}>
+              Import{importVersionMeta ? ` v${importVersionMeta.version}` : ''}
+            </span>
+            <button
+              type="button"
+              disabled={!hasOriginal || !!importBusy}
+              onClick={() => doAeImport('original')}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 5,
+                padding: '3px 8px',
+                color: 'var(--muted)',
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: hasOriginal && !importBusy ? 'pointer' : 'default',
+                fontFamily: 'inherit',
+                opacity: !hasOriginal || importBusy ? 0.4 : 1,
+              }}
+            >
+              {importBusy === 'original' ? '…' : 'Original'}
+            </button>
+            <button
+              type="button"
+              disabled={!hasProxy || !!importBusy}
+              onClick={() => doAeImport('proxy')}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border)',
+                borderRadius: 5,
+                padding: '3px 8px',
+                color: 'var(--muted)',
+                fontSize: 10,
+                fontWeight: 600,
+                cursor: hasProxy && !importBusy ? 'pointer' : 'default',
+                fontFamily: 'inherit',
+                opacity: !hasProxy || importBusy ? 0.4 : 1,
+              }}
+            >
+              {importBusy === 'proxy' ? '…' : 'Proxy'}
+            </button>
+            {!importVersionMeta && !versionsLoading && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', opacity: 0.7 }}>needs a published version</span>
+            )}
+            {importVersionMeta && !hasOriginal && hasProxy && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', opacity: 0.7 }}>proxy only</span>
+            )}
+          </div>
+        )}
 
         <div className="section-label">Versions ({versions.length})</div>
         {versionsLoading && <div className="loading">Loading versions...</div>}

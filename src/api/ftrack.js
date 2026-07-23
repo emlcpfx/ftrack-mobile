@@ -2,11 +2,13 @@ import { Session } from '@ftrack/api';
 
 let _session = null;
 let _userId = null;
+let _creds = null; // { serverUrl, apiUser, apiKey } for CEP Python upload
 
 export async function createSession({ serverUrl, apiUser, apiKey }) {
   const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
   _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
   await _session.initializing;
+  _creds = { serverUrl: url, apiUser, apiKey };
   // Resolve and cache the current user's ID for note authorship etc.
   const me = await _session.query(`select id from User where username is "${apiUser}"`);
   _userId = me.data[0]?.id || null;
@@ -17,45 +19,53 @@ export function getCurrentUserId() {
   return _userId;
 }
 
+export function getSessionCreds() {
+  return _creds;
+}
+
 export function getSession() {
   if (!_session) throw new Error('No active ftrack session');
   return _session;
 }
 
 /**
- * Publish a File/Blob to a task as a new AssetVersion on the shot.
- * Uses the logged-in panel session (no Python / separate credentials).
+ * Publish a File/Blob (or CEP disk path) to a task as a new AssetVersion.
+ * In AE panel, path-based uploads use Python encode_media (same as right-click uploader).
  */
 export async function publishFileToTask({
   taskId,
   shotId,
   file,
+  filePath: filePathArg,
   assetName,
   version: forcedVersion,
   setTaskStatusId,
   onProgress,
 } = {}) {
   if (!taskId || !shotId) throw new Error('Need a matched shot and task to publish');
-  if (!file) throw new Error('No file to publish');
-  if (typeof file.size === 'number' && file.size <= 0) {
+  if (!file && !filePathArg) throw new Error('No file to publish');
+  if (file && typeof file.size === 'number' && file.size <= 0 && !filePathArg && !file._aePath && !file.path) {
     throw new Error('File is empty (0 bytes)');
   }
 
   const s = getSession();
   if (!s) throw new Error('Not logged in to ftrack');
 
-  const report = (pct, phase = 'upload') => {
+  const report = (pct, phase = 'upload', msg) => {
     if (typeof onProgress === 'function') {
       try {
-        onProgress({ percent: Math.max(0, Math.min(100, Math.round(pct))), phase });
+        onProgress({ percent: Math.max(0, Math.min(100, Math.round(pct))), phase, msg });
       } catch {
         /* ignore UI callback errors */
       }
     }
   };
 
+  const diskPath = filePathArg || file?._aePath || file?.path || null;
   const baseName = assetName
-    || String(file.name || 'upload')
+    || String(file?.name || diskPath || 'upload')
+      .split(/[/\\]/)
+      .pop()
       .replace(/\.[^.]+$/, '')
       .replace(/_v\d+(?:_[LR]T)?$/i, '');
 
@@ -128,21 +138,69 @@ export async function publishFileToTask({
     if (!versionId) throw new Error('Failed to create AssetVersion');
 
     let componentId = null;
+    let viaPython = false;
     try {
-      report(0, 'upload');
-      const componentResults = await s.createComponent(file, {
-        name: file.name || `${baseName}.mov`,
-        data: { version_id: versionId },
-        onProgress: (pct) => report(pct, 'upload'),
-      });
-      const compResult = Array.isArray(componentResults)
-        ? componentResults[0]
-        : componentResults;
-      componentId = compResult?.data?.id ?? compResult?.id ?? null;
-      if (!componentId) {
-        throw new Error('createComponent returned no component id');
+      // CEP + disk path → Python encode_media (streams; matches right-click uploader speed)
+      const usePython = !!(diskPath && _creds && typeof window !== 'undefined' && window.__adobe_cep__);
+      if (usePython) {
+        viaPython = true;
+        report(5, 'upload', 'Streaming via Python…');
+        const { encodeMediaViaPython } = await import('../ae/pythonEncode.js');
+        const result = await encodeMediaViaPython({
+          server: _creds.serverUrl,
+          user: _creds.apiUser,
+          apiKey: _creds.apiKey,
+          versionId,
+          filePath: diskPath,
+          componentName: baseName,
+          onProgress: ({ percent, phase, msg }) => report(percent, phase, msg),
+        });
+        componentId = result.componentId || null;
+        report(100, 'encode');
+      } else {
+        let uploadFile = file;
+        // Stub from path (size override, empty bytes) — load from disk for XHR fallback
+        if (diskPath && typeof window !== 'undefined' && window.require) {
+          const needsBytes = !uploadFile || uploadFile.size === 0 || uploadFile._aePath;
+          if (needsBytes) {
+            const fs = window.require('fs');
+            const path = window.require('path');
+            const buf = fs.readFileSync(diskPath);
+            uploadFile = new File([buf], path.basename(diskPath));
+          }
+        }
+        if (!uploadFile || uploadFile.size <= 0) {
+          throw new Error('No file data to upload');
+        }
+        report(0, 'upload');
+        const componentResults = await s.createComponent(uploadFile, {
+          name: uploadFile.name || `${baseName}.mov`,
+          data: { version_id: versionId },
+          onProgress: (pct) => report(pct, 'upload'),
+        });
+        const compResult = Array.isArray(componentResults)
+          ? componentResults[0]
+          : componentResults;
+        componentId = compResult?.data?.id ?? compResult?.id ?? null;
+        if (!componentId) {
+          throw new Error('createComponent returned no component id');
+        }
+        report(100, 'upload');
+
+        try {
+          report(100, 'encode');
+          await s.call([
+            {
+              action: 'encode_media',
+              component_id: componentId,
+              version_id: versionId,
+              keep_original: true,
+            },
+          ]);
+        } catch (err) {
+          console.warn('[publish] encode_media skipped:', err);
+        }
       }
-      report(100, 'upload');
     } catch (uploadErr) {
       // Best-effort cleanup so we don't leave empty versions
       try {
@@ -153,22 +211,6 @@ export async function publishFileToTask({
       throw new Error(
         `File upload failed: ${uploadErr?.message || uploadErr}`,
       );
-    }
-
-    if (componentId) {
-      try {
-        report(100, 'encode');
-        await s.call([
-          {
-            action: 'encode_media',
-            component_id: componentId,
-            version_id: versionId,
-            keep_original: true,
-          },
-        ]);
-      } catch (err) {
-        console.warn('[publish] encode_media skipped:', err);
-      }
     }
 
     let statusApplied = null;
@@ -191,12 +233,14 @@ export async function publishFileToTask({
       assetName: baseName,
       statusApplied,
       statusWarning,
+      viaPython,
     };
   } catch (err) {
     // Re-throw with filename context when possible
-    const name = file?.name ? ` (${file.name})` : '';
+    const label = file?.name || diskPath;
+    const name = label ? ` (${label})` : '';
     const msg = err?.message || String(err);
-    if (msg.includes(file?.name || '\0')) throw err;
+    if (label && msg.includes(label)) throw err;
     const e = new Error(`${msg}${name}`);
     e.cause = err;
     throw e;
