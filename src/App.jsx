@@ -18,6 +18,9 @@ import {
 } from "./api/ftrack";
 import { isAePanel } from "./ae/bridge.js";
 import AeWorkspace from "./ae/AeWorkspace.jsx";
+import AeAlerts from "./ae/AeAlerts.jsx";
+import { resolveAeProject, persistSharedProjectId } from "./ae/projectContext.js";
+import { fetchAeAlerts } from "./ae/alerts.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
@@ -112,6 +115,7 @@ const css = `
   .nav-item.active .nav-label { color:var(--accent); }
   .nav-item.active .nav-icon { transform:translateY(-2px); }
   .nav-pill { position:absolute; top:4px; right:12px; background:var(--accent); border-radius:10px; padding:1px 6px; font-size:9px; font-weight:700; color:#fff; }
+  .ae-panel .nav-pill { background:var(--red); }
 
   /* ── Reviews tab ── */
   .section-label { font-size:11px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--muted); padding:16px 20px 8px; }
@@ -1249,14 +1253,53 @@ function ReviewsTab({ userInitial }) {
 
   // Load projects and statuses on mount
   useEffect(() => {
-    fetchProjects().then(setProjects).catch(() => {});
+    fetchProjects()
+      .then(async (projs) => {
+        setProjects(projs);
+        if (isAePanel()) {
+          const { project } = await resolveAeProject(projs);
+          if (project) {
+            setSelectedProjectId(project.id);
+            persistSharedProjectId(project.id);
+            return;
+          }
+        }
+      })
+      .catch(() => {});
     fetchStatuses().then(s => setStatuses(s.map(st => ({ ...st, color: normalizeColor(st.color) })))).catch(() => {});
   }, []);
 
   // Persist selected project
   useEffect(() => {
-    try { sessionStorage.setItem('ftrack_reviews_project', selectedProjectId); } catch {}
+    if (selectedProjectId) persistSharedProjectId(selectedProjectId);
+    else {
+      try { sessionStorage.setItem('ftrack_reviews_project', selectedProjectId); } catch {}
+    }
   }, [selectedProjectId]);
+
+  // In AE: keep Reviews project in sync with .aep / comp show code
+  useEffect(() => {
+    if (!isAePanel() || projects.length === 0) return;
+    let cancelled = false;
+    let lastCode = '';
+    const tick = async () => {
+      const { project, hints } = await resolveAeProject(projects);
+      if (cancelled || !project) return;
+      const code = hints.showCode || '';
+      if (code && code !== lastCode) {
+        lastCode = code;
+        if (project.id !== selectedProjectId) {
+          setSelectedProjectId(project.id);
+          persistSharedProjectId(project.id);
+        }
+      } else if (!lastCode && code) {
+        lastCode = code;
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [projects, selectedProjectId]);
 
   // Load reviews (filtered by project when selected)
   useEffect(() => {
@@ -2063,8 +2106,16 @@ function ShotsTab() {
     const checkDone = () => { if (++done >= 2) setLoading(false); };
 
     fetchProjects()
-      .then(projs => {
+      .then(async (projs) => {
         setProjects(projs);
+        if (isAePanel()) {
+          const { project } = await resolveAeProject(projs);
+          if (project) {
+            setSelectedProjectId(project.id);
+            persistSharedProjectId(project.id);
+            return;
+          }
+        }
         // Restore saved project or default to first
         const saved = sessionStorage.getItem('ftrack_shots_project');
         const match = saved && projs.find(p => p.id === saved);
@@ -2085,9 +2136,33 @@ function ShotsTab() {
   // Persist selected project
   useEffect(() => {
     if (selectedProjectId) {
-      try { sessionStorage.setItem('ftrack_shots_project', selectedProjectId); } catch {}
+      persistSharedProjectId(selectedProjectId);
     }
   }, [selectedProjectId]);
+
+  // In AE: keep Shots project in sync with .aep / comp show code
+  useEffect(() => {
+    if (!isAePanel() || projects.length === 0) return;
+    let cancelled = false;
+    let lastCode = '';
+    const tick = async () => {
+      const { project, hints } = await resolveAeProject(projects);
+      if (cancelled || !project) return;
+      const code = hints.showCode || '';
+      if (code && code !== lastCode) {
+        lastCode = code;
+        if (project.id !== selectedProjectId) {
+          setSelectedProjectId(project.id);
+          persistSharedProjectId(project.id);
+        }
+      } else if (!lastCode && code) {
+        lastCode = code;
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [projects, selectedProjectId]);
 
   // Load shots, shot-specific statuses, and project members when project changes
   useEffect(() => {
@@ -3609,6 +3684,7 @@ export default function App() {
     }
   });
   const [showNotifSettings, setShowNotifSettings] = useState(false);
+  const [alertCount, setAlertCount] = useState(0);
   const [restoring, setRestoring] = useState(true);
 
   // Persist active tab
@@ -3620,6 +3696,29 @@ export default function App() {
   useEffect(() => {
     if (!inAe && tab === 'ae') setTab('reviews');
   }, [inAe, tab]);
+
+  // AE: poll assigned "needs work" tasks for bell badge (no Web Push)
+  useEffect(() => {
+    if (!inAe || !auth) {
+      setAlertCount(0);
+      return;
+    }
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const projectId = sessionStorage.getItem('ftrack_ae_project')
+          || sessionStorage.getItem('ftrack_shots_project')
+          || undefined;
+        const { count } = await fetchAeAlerts({ projectId: projectId || undefined });
+        if (!cancelled) setAlertCount(count);
+      } catch {
+        if (!cancelled) setAlertCount(0);
+      }
+    };
+    tick();
+    const id = setInterval(tick, 45000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [inAe, auth]);
 
   // Restore saved session on mount
   useEffect(() => {
@@ -3673,7 +3772,21 @@ export default function App() {
       <div className="app">
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", minHeight: 0 }}>
           {showNotifSettings ? (
-            <NotificationSettings onClose={() => setShowNotifSettings(false)} />
+            inAe ? (
+              <AeAlerts
+                onClose={() => setShowNotifSettings(false)}
+                projectId={(() => {
+                  try {
+                    return sessionStorage.getItem('ftrack_ae_project')
+                      || sessionStorage.getItem('ftrack_shots_project')
+                      || '';
+                  } catch { return ''; }
+                })()}
+                onCountChange={setAlertCount}
+              />
+            ) : (
+              <NotificationSettings onClose={() => setShowNotifSettings(false)} />
+            )
           ) : (
             <>
               {tab === "ae" && inAe && <AeWorkspace />}
@@ -3705,6 +3818,9 @@ export default function App() {
           <div className={`nav-item ${showNotifSettings ? "active" : ""}`} onClick={() => setShowNotifSettings(true)}>
             <div className="nav-icon">&#128276;</div>
             <div className="nav-label">Alerts</div>
+            {inAe && alertCount > 0 && (
+              <div className="nav-pill">{alertCount > 99 ? '99+' : alertCount}</div>
+            )}
           </div>
         </div>
       </div>

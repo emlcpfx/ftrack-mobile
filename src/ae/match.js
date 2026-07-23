@@ -1,5 +1,6 @@
 /**
- * Heuristics for matching AE comp names → ftrack shot names.
+ * Heuristics for matching AE comp names → ftrack shot names,
+ * and AE project/comp prefixes → ftrack projects.
  */
 
 export function normalizeShotToken(name) {
@@ -10,6 +11,17 @@ export function normalizeShotToken(name) {
     .replace(/[_\s.-]*v\d+[_\s.-]*$/i, '')
     .replace(/\s+/g, '_')
     .toLowerCase();
+}
+
+/** Show/job code from AE filename or comp: LLL_FA_070 → "lll" */
+export function extractShowCode(name) {
+  const raw = String(name || '')
+    .trim()
+    .replace(/\.(aep|aepx)$/i, '');
+  if (!raw) return '';
+  const first = raw.split(/[_\-.\s]+/).filter(Boolean)[0] || '';
+  if (/^(comp|precomp|main|master|untitled|new|project)$/i.test(first)) return '';
+  return first.toLowerCase();
 }
 
 /** Score 0–100 how well *compName* matches *shotName*. */
@@ -28,7 +40,6 @@ export function scoreShotMatch(compName, shotName) {
   if (cn.startsWith(sn) || sn.startsWith(cn)) return 70;
   if (cn.includes(sn) || sn.includes(cn)) return 50;
 
-  // Shared first token (e.g. SH010_comp vs SH010_plate)
   const ct = cn.split(/[_\-.]+/)[0];
   const st = sn.split(/[_\-.]+/)[0];
   if (ct && st && ct === st && ct.length >= 3) return 60;
@@ -43,10 +54,72 @@ export function rankShotMatches(compName, shots) {
     .sort((a, b) => b.score - a.score || a.shot.name.localeCompare(b.shot.name));
 }
 
-/** First path segment useful for LIKE queries. */
 export function searchTokenFromComp(compName) {
   const raw = String(compName || '').trim();
   const norm = normalizeShotToken(raw);
   const token = (norm || raw).split(/[_\-.]+/).filter(Boolean)[0];
   return token || raw;
+}
+
+function escapeReg(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Score ftrack project against AE .aep name + active comp name.
+ * hints: { projectName, compName }
+ */
+export function scoreProjectMatch(hints, project) {
+  const candidates = [hints?.projectName, hints?.compName].filter(Boolean);
+  if (!candidates.length || !project) return 0;
+
+  const codes = [
+    ...new Set(candidates.map(extractShowCode).filter((c) => c.length >= 2)),
+  ];
+  const labels = [project.name, project.full_name].filter(Boolean);
+  let best = 0;
+
+  for (const label of labels) {
+    const ln = label.toLowerCase();
+    const pCode = extractShowCode(label);
+
+    for (const code of codes) {
+      if (pCode === code || ln === code) best = Math.max(best, 100);
+      if (
+        ln.startsWith(`${code} `) ||
+        ln.startsWith(`${code}_`) ||
+        ln.startsWith(`${code}-`)
+      ) {
+        best = Math.max(best, 95);
+      }
+      if (new RegExp(`(^|[\\s_\\-./])${escapeReg(code)}([\\s_\\-./]|$)`, 'i').test(label)) {
+        best = Math.max(best, 90);
+      }
+      if (code.length >= 3 && ln.includes(code)) best = Math.max(best, 75);
+    }
+
+    for (const hint of candidates) {
+      const h = String(hint).toLowerCase().replace(/\.(aep|aepx)$/i, '');
+      if (h === ln) best = Math.max(best, 100);
+      if (h.startsWith(`${ln}_`) || h.startsWith(`${ln}-`) || h.startsWith(`${ln} `)) {
+        best = Math.max(best, 92);
+      }
+      if (ln.length >= 3 && h.includes(ln)) best = Math.max(best, 70);
+    }
+  }
+
+  return best;
+}
+
+/** Best ftrack project for AE context, or null if confidence < 70. */
+export function pickProjectFromAe(projects, hints) {
+  const ranked = (projects || [])
+    .map((project) => ({ project, score: scoreProjectMatch(hints, project) }))
+    .filter((x) => x.score >= 70)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        String(a.project.name || '').localeCompare(String(b.project.name || '')),
+    );
+  return ranked[0] || null;
 }

@@ -23,6 +23,10 @@ import {
   downloadAndImport,
 } from './bridge.js';
 import { rankShotMatches } from './match.js';
+import {
+  resolveAeProject,
+  persistSharedProjectId,
+} from './projectContext.js';
 
 const normalizeColor = (c) => {
   if (!c) return '#6b7280';
@@ -238,6 +242,7 @@ export default function AeWorkspace() {
   const [toast, setToast] = useState('');
   const [matching, setMatching] = useState(false);
   const lastCompName = useRef('');
+  const lastShowCode = useRef('');
   const meId = getCurrentUserId();
 
   const showToast = useCallback((msg) => {
@@ -247,18 +252,54 @@ export default function AeWorkspace() {
 
   useEffect(() => {
     fetchProjects()
-      .then(setProjects)
+      .then(async (projs) => {
+        setProjects(projs);
+        if (!isAePanel() || !projs.length) return;
+        const { project } = await resolveAeProject(projs);
+        if (project) {
+          setProjectId(project.id);
+          persistSharedProjectId(project.id);
+          lastCompName.current = '';
+        }
+      })
       .catch((e) => setError(e.message || String(e)));
     fetchProjectMembers()
       .then(setMembers)
       .catch(() => setMembers([]));
   }, []);
 
+  // Re-pick ftrack project when AE .aep / show code changes
+  useEffect(() => {
+    if (!isAePanel() || projects.length === 0) return;
+    let cancelled = false;
+    const tick = async () => {
+      const { project, hints } = await resolveAeProject(projects);
+      if (cancelled || !project) return;
+      const code = hints.showCode || '';
+      if (code && code !== lastShowCode.current) {
+        lastShowCode.current = code;
+        if (project.id !== projectId) {
+          setProjectId(project.id);
+          persistSharedProjectId(project.id);
+          lastCompName.current = '';
+          setShot(null);
+          setMatches([]);
+        }
+      } else if (!lastShowCode.current && code) {
+        lastShowCode.current = code;
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [projects, projectId]);
+
   useEffect(() => {
     if (!projectId) return;
-    try {
-      sessionStorage.setItem('ftrack_ae_project', projectId);
-    } catch { /* ignore */ }
+    persistSharedProjectId(projectId);
     fetchShotStatuses(projectId)
       .then(setStatuses)
       .catch(() => setStatuses([]));
@@ -574,6 +615,7 @@ export default function AeWorkspace() {
           placeholder="Project…"
           onChange={(id) => {
             setProjectId(id);
+            persistSharedProjectId(id);
             lastCompName.current = '';
             setShot(null);
             setMatches([]);

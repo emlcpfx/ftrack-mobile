@@ -607,6 +607,39 @@ export async function fetchTasksByStatus(projectId, statusName) {
   return result.data;
 }
 
+/**
+ * Tasks assigned to a user (via Appointment).
+ * Optional projectId scopes to one project.
+ */
+export async function fetchTasksAssignedToUser(userId, { projectId } = {}) {
+  if (!userId) return [];
+  const s = getSession();
+  const appts = await s.query(
+    `select context_id from Appointment
+     where resource_id is "${userId}" and type is "assignment"
+     limit 400`
+  );
+  const ids = [...new Set(appts.data.map((a) => a.context_id).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const tasks = [];
+  const projectFilter = projectId ? ` and project.id is "${projectId}"` : '';
+  for (let i = 0; i < ids.length; i += 40) {
+    const batch = ids.slice(i, i + 40);
+    const idList = batch.map((id) => `"${id}"`).join(', ');
+    const result = await s.query(
+      `select id, name, type.name,
+              parent.id, parent.name,
+              status.id, status.name, status.color,
+              project.id, project.name
+       from Task
+       where id in (${idList})${projectFilter}`
+    );
+    tasks.push(...result.data);
+  }
+  return tasks;
+}
+
 /** Fetch latest version for a task (used to add task's version to review) */
 export async function fetchLatestVersionForTask(taskId) {
   const s = getSession();
