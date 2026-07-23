@@ -1,11 +1,17 @@
 {
   "name": "ftrack-mobile",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:cep": "vite build --mode cep",
+    "cep:debug": "powershell -ExecutionPolicy Bypass -File scripts/enable-cep-debug.ps1",
+    "cep:link": "powershell -ExecutionPolicy Bypass -File scripts/link-cep.ps1",
+    "version:patch": "node scripts/bump-version.mjs patch",
+    "version:minor": "node scripts/bump-version.mjs minor",
+    "version:major": "node scripts/bump-version.mjs major",
     "lint": "eslint .",
     "preview": "vite preview"
   },

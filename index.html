@@ -13,7 +13,8 @@
     <div id="root"></div>
     <script type="module" src="/src/main.jsx"></script>
     <script>
-      if ('serviceWorker' in navigator) {
+      // Skip SW inside After Effects CEP (file:// + no need for offline shell)
+      if ('serviceWorker' in navigator && !window.__adobe_cep__) {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js').catch(() => {});
         });

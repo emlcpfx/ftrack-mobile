@@ -16,6 +16,8 @@ import {
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
   cleanAndSortReview,
 } from "./api/ftrack";
+import { isAePanel } from "./ae/bridge.js";
+import AeWorkspace from "./ae/AeWorkspace.jsx";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
@@ -97,6 +99,10 @@ const css = `
   /* ── Scroll area ── */
   .scroll { flex:1; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; padding-bottom:80px; min-height:0; }
   .scroll::-webkit-scrollbar { display:none; }
+
+  /* ── AE CEP panel ── */
+  .ae-panel .bottom-nav { padding-bottom:0; height:56px; }
+  .ae-panel .app { max-width:none; margin:0; height:100%; }
 
   /* ── Bottom Nav ── */
   .bottom-nav { position:absolute; bottom:0; left:0; right:0; height:68px; background:var(--surface); border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-around; padding-bottom:env(safe-area-inset-bottom); z-index:100; }
@@ -3592,9 +3598,15 @@ function NotificationSettings({ onClose }) {
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 export default function App() {
+  const inAe = isAePanel();
   const [auth, setAuth] = useState(null);
   const [tab, setTab] = useState(() => {
-    try { return sessionStorage.getItem('ftrack_tab') || 'reviews'; } catch { return 'reviews'; }
+    try {
+      if (isAePanel()) return sessionStorage.getItem('ftrack_tab') || 'ae';
+      return sessionStorage.getItem('ftrack_tab') || 'reviews';
+    } catch {
+      return isAePanel() ? 'ae' : 'reviews';
+    }
   });
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [restoring, setRestoring] = useState(true);
@@ -3603,6 +3615,11 @@ export default function App() {
   useEffect(() => {
     try { sessionStorage.setItem('ftrack_tab', tab); } catch {}
   }, [tab]);
+
+  // Browser shouldn't stay on AE tab
+  useEffect(() => {
+    if (!inAe && tab === 'ae') setTab('reviews');
+  }, [inAe, tab]);
 
   // Restore saved session on mount
   useEffect(() => {
@@ -3659,6 +3676,7 @@ export default function App() {
             <NotificationSettings onClose={() => setShowNotifSettings(false)} />
           ) : (
             <>
+              {tab === "ae" && inAe && <AeWorkspace />}
               {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
               {tab === "shots" && <ShotsTab />}
               {tab === "chat" && <ChatTab />}
@@ -3666,6 +3684,12 @@ export default function App() {
           )}
         </div>
         <div className="bottom-nav">
+          {inAe && (
+            <div className={`nav-item ${tab === "ae" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("ae"); }}>
+              <div className="nav-icon">&#9881;</div>
+              <div className="nav-label">AE</div>
+            </div>
+          )}
           <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("reviews"); }}>
             <div className="nav-icon">&#127916;</div>
             <div className="nav-label">Reviews</div>

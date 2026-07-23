@@ -123,6 +123,129 @@ export async function fetchShots(projectId) {
   return result.data;
 }
 
+function escapeFql(value) {
+  return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/** Exact + fuzzy shot lookup for AE comp matching. */
+export async function findShotsMatchingName(projectId, name) {
+  const s = getSession();
+  const escaped = escapeFql(name);
+  const exact = await s.query(
+    `select id, name, description,
+            status.id, status.name, status.color,
+            thumbnail_id
+     from Shot
+     where project.id is "${projectId}" and name is "${escaped}"
+     limit 10`
+  );
+  if (exact.data.length) return exact.data;
+
+  // First token LIKE (SH010_comp → SH010)
+  const token = String(name || '')
+    .trim()
+    .replace(/\.(aep|aepx)$/i, '')
+    .split(/[_\s.-]+/)
+    .filter(Boolean)[0] || name;
+  const like = await s.query(
+    `select id, name, description,
+            status.id, status.name, status.color,
+            thumbnail_id
+     from Shot
+     where project.id is "${projectId}" and name like "%${escapeFql(token)}%"
+     order by name ascending
+     limit 40`
+  );
+  return like.data;
+}
+
+/** Tasks under a single shot. */
+export async function fetchTasksForShot(shotId) {
+  const s = getSession();
+  const result = await s.query(
+    `select id, name, type.name,
+            status.id, status.name, status.color,
+            assignments.resource.id, assignments.resource.first_name,
+            assignments.resource.last_name, assignments.resource.username
+     from Task
+     where parent_id is "${shotId}"`
+  );
+  return result.data.map((task) => {
+    const assignees = (task.assignments || []).map((a) => a.resource).filter(Boolean);
+    return {
+      id: task.id,
+      name: task.name,
+      type: task.type?.name || '',
+      status: {
+        id: task.status?.id,
+        name: task.status?.name || 'Unknown',
+        color: task.status?.color || '',
+      },
+      assignee: assignees.map((r) => r.first_name).filter(Boolean).join(', '),
+      assigneeIds: assignees.map((r) => r.id).filter(Boolean),
+    };
+  });
+}
+
+/** Replace task assignments with a single user (or clear if userId is null). */
+export async function setTaskAssignee(taskId, userId) {
+  const s = getSession();
+  const existing = await s.query(
+    `select id, resource_id from Appointment
+     where context_id is "${taskId}" and type is "assignment"`
+  );
+  for (const appt of existing.data) {
+    if (!userId || appt.resource_id !== userId) {
+      await s.delete('Appointment', [appt.id]);
+    }
+  }
+  if (userId && !existing.data.some((a) => a.resource_id === userId)) {
+    await s.create('Appointment', {
+      context_id: taskId,
+      resource_id: userId,
+      type: 'assignment',
+    });
+  }
+}
+
+/**
+ * Pick a component for AE import.
+ * mode: 'original' | 'proxy'
+ */
+export function pickAeImportComponent(components, mode = 'original') {
+  if (!components?.length) return null;
+
+  const isReview = (c) =>
+    c.name === 'ftrackreview-mp4' ||
+    c.name === 'ftrackreview-webm' ||
+    c.name === 'ftrackreview-image' ||
+    (c.name && String(c.name).startsWith('ftrackreview'));
+
+  if (mode === 'proxy') {
+    return (
+      components.find((c) => c.name === 'ftrackreview-mp4') ||
+      components.find(isReview) ||
+      components.find((c) => c.file_type === '.mp4') ||
+      components.find((c) => c.file_type === '.mov') ||
+      null
+    );
+  }
+
+  const originals = components.filter((c) => !isReview(c));
+  const preferExt = [
+    '.mov', '.mp4', '.mxf', '.avi', '.mkv',
+    '.exr', '.dpx', '.jpg', '.jpeg', '.png', '.tif', '.tiff',
+  ];
+  for (const ext of preferExt) {
+    const hit = originals.find(
+      (c) => String(c.file_type || '').toLowerCase() === ext,
+    );
+    if (hit) return hit;
+  }
+  if (originals[0]) return originals[0];
+  return pickAeImportComponent(components, 'proxy');
+}
+
 export async function fetchProjectTasks(projectId) {
   const s = getSession();
   const result = await s.query(
