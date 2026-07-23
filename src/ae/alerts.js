@@ -40,14 +40,11 @@ export function setAeAlertStatusNames(names) {
   localStorage.setItem(STATUSES_KEY, JSON.stringify(names));
 }
 
+/** Watch list is authoritative — no hardcoded extras. */
 export function isAttentionStatus(statusName, watchList = getAeAlertStatusNames()) {
   const n = String(statusName || '').trim().toLowerCase();
   if (!n) return false;
-  if (watchList.some((s) => String(s).trim().toLowerCase() === n)) return true;
-  if (/\bfix(es)?\b/.test(n)) return true;
-  if (/changes?\s*needed/.test(n)) return true;
-  if (/retake/.test(n)) return true;
-  return false;
+  return watchList.some((s) => String(s).trim().toLowerCase() === n);
 }
 
 function loadDismissed() {
@@ -80,7 +77,6 @@ export function dismissAllAeAlerts(tasks) {
 function isDismissed(task, dismissed) {
   const d = dismissed[task.id];
   if (d == null) return false;
-  // Re-alert if status changed since dismiss
   if (d === true) return true;
   return d === task.status?.id;
 }
@@ -104,13 +100,15 @@ function normalizeTask(t) {
 
 /**
  * Fetch attention alerts for the logged-in user.
- * @returns {{ alerts: array, count: number }}
+ * Omit projectId to search all projects.
  */
 export async function fetchAeAlerts({ projectId } = {}) {
   const userId = getCurrentUserId();
   if (!userId) return { alerts: [], count: 0 };
 
-  const tasks = await fetchTasksAssignedToUser(userId, { projectId: projectId || undefined });
+  const tasks = await fetchTasksAssignedToUser(userId, {
+    projectId: projectId || undefined,
+  });
   const watch = getAeAlertStatusNames();
   const dismissed = loadDismissed();
 

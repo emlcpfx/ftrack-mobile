@@ -22,6 +22,170 @@ export function getSession() {
   return _session;
 }
 
+/**
+ * Publish a File/Blob to a task as a new AssetVersion on the shot.
+ * Uses the logged-in panel session (no Python / separate credentials).
+ */
+export async function publishFileToTask({
+  taskId,
+  shotId,
+  file,
+  assetName,
+  version: forcedVersion,
+  setTaskStatusId,
+} = {}) {
+  if (!taskId || !shotId) throw new Error('Need a matched shot and task to publish');
+  if (!file) throw new Error('No file to publish');
+  if (typeof file.size === 'number' && file.size <= 0) {
+    throw new Error('File is empty (0 bytes)');
+  }
+
+  const s = getSession();
+  if (!s) throw new Error('Not logged in to ftrack');
+
+  const baseName = assetName
+    || String(file.name || 'upload')
+      .replace(/\.[^.]+$/, '')
+      .replace(/_v\d+(?:_[LR]T)?$/i, '');
+
+  try {
+    // Asset type
+    let typeResult = await s.query(`select id, name from AssetType where name is "Upload"`);
+    let assetType = typeResult.data[0];
+    if (!assetType) {
+      typeResult = await s.query(`select id, name from AssetType limit 1`);
+      assetType = typeResult.data[0];
+    }
+    if (!assetType) throw new Error('No AssetType found on this ftrack server');
+
+    // Asset uses parent relationship (no parent_id). Pass real entities.
+    let asset = (
+      await s.query(
+        `select id, name from Asset
+         where parent.id is "${shotId}" and name is "${escapeFql(baseName)}"
+         limit 1`,
+      )
+    ).data[0];
+
+    if (!asset) {
+      const shot = (
+        await s.query(`select id, name from Shot where id is "${shotId}" limit 1`)
+      ).data[0];
+      if (!shot) throw new Error('Shot not found for publish');
+
+      const created = await s.create('Asset', {
+        name: baseName,
+        type: assetType,
+        parent: shot,
+      });
+      asset = created?.data ?? created;
+    }
+    if (!asset?.id) throw new Error('Failed to create Asset');
+
+    let nextVersion = forcedVersion;
+    if (nextVersion == null || Number.isNaN(Number(nextVersion))) {
+      const latest = await s.query(
+        `select version from AssetVersion
+         where asset.id is "${asset.id}"
+         order by version descending
+         limit 1`,
+      );
+      nextVersion = (latest.data[0]?.version || 0) + 1;
+    } else {
+      nextVersion = Number(nextVersion);
+      // If that version already exists on this asset+task, fail clearly
+      const existing = await s.query(
+        `select id, version from AssetVersion
+         where asset.id is "${asset.id}" and version is ${nextVersion}
+         limit 1`,
+      );
+      if (existing.data[0]) {
+        throw new Error(
+          `v${nextVersion} already exists on asset "${baseName}" — rename / bump version`,
+        );
+      }
+    }
+
+    const verResult = await s.create('AssetVersion', {
+      asset_id: asset.id,
+      task_id: taskId,
+      version: nextVersion,
+    });
+    const versionId = verResult?.data?.id ?? verResult?.id;
+    if (!versionId) throw new Error('Failed to create AssetVersion');
+
+    let componentId = null;
+    try {
+      const componentResults = await s.createComponent(file, {
+        name: file.name || `${baseName}.mov`,
+        data: { version_id: versionId },
+      });
+      const compResult = Array.isArray(componentResults)
+        ? componentResults[0]
+        : componentResults;
+      componentId = compResult?.data?.id ?? compResult?.id ?? null;
+      if (!componentId) {
+        throw new Error('createComponent returned no component id');
+      }
+    } catch (uploadErr) {
+      // Best-effort cleanup so we don't leave empty versions
+      try {
+        await s.delete('AssetVersion', [versionId]);
+      } catch (cleanupErr) {
+        console.warn('[publish] orphan version cleanup failed:', cleanupErr);
+      }
+      throw new Error(
+        `File upload failed: ${uploadErr?.message || uploadErr}`,
+      );
+    }
+
+    if (componentId) {
+      try {
+        await s.call([
+          {
+            action: 'encode_media',
+            component_id: componentId,
+            version_id: versionId,
+            keep_original: true,
+          },
+        ]);
+      } catch (err) {
+        console.warn('[publish] encode_media skipped:', err);
+      }
+    }
+
+    let statusApplied = null;
+    let statusWarning = null;
+    if (setTaskStatusId) {
+      try {
+        await s.update('Task', [taskId], { status_id: setTaskStatusId });
+        statusApplied = setTaskStatusId;
+      } catch (err) {
+        statusWarning = err?.message || String(err);
+        console.warn('[publish] status update failed:', err);
+      }
+    }
+
+    return {
+      versionId,
+      version: nextVersion,
+      componentId,
+      assetId: asset.id,
+      assetName: baseName,
+      statusApplied,
+      statusWarning,
+    };
+  } catch (err) {
+    // Re-throw with filename context when possible
+    const name = file?.name ? ` (${file.name})` : '';
+    const msg = err?.message || String(err);
+    if (msg.includes(file?.name || '\0')) throw err;
+    const e = new Error(`${msg}${name}`);
+    e.cause = err;
+    throw e;
+  }
+}
+
 // ── Reviews ───────────────────────────────────────────────────────────────────
 
 export async function fetchReviews(projectId) {
@@ -211,6 +375,7 @@ export async function setTaskAssignee(taskId, userId) {
 /**
  * Pick a component for AE import.
  * mode: 'original' | 'proxy'
+ * Original NEVER falls back to review proxy — buttons must stay honest.
  */
 export function pickAeImportComponent(components, mode = 'original') {
   if (!components?.length) return null;
@@ -242,8 +407,24 @@ export function pickAeImportComponent(components, mode = 'original') {
     );
     if (hit) return hit;
   }
-  if (originals[0]) return originals[0];
-  return pickAeImportComponent(components, 'proxy');
+  return originals[0] || null;
+}
+
+/** Assign user to task without removing existing assignees. */
+export async function assignUserToTask(taskId, userId) {
+  if (!taskId || !userId) return;
+  const s = getSession();
+  const existing = await s.query(
+    `select id from Appointment
+     where context_id is "${taskId}" and resource_id is "${userId}" and type is "assignment"`
+  );
+  if (existing.data.length === 0) {
+    await s.create('Appointment', {
+      context_id: taskId,
+      resource_id: userId,
+      type: 'assignment',
+    });
+  }
 }
 
 export async function fetchProjectTasks(projectId) {
@@ -336,7 +517,7 @@ export async function fetchShotStatuses(projectId) {
 
   // 2. Get all schemas under this project schema (Shot + all Task types)
   const schemas = await s.query(
-    `select id, object_type_id from Schema where project_schema_id is "${psId}"`
+    `select id, object_type_id, object_type.name from Schema where project_schema_id is "${psId}"`
   );
   if (schemas.data.length === 0) return [];
 
@@ -351,6 +532,162 @@ export async function fetchShotStatuses(projectId) {
   // 4. Fetch the actual Status entities
   const statuses = await s.query(
     `select id, name, color from Status where id in (${statusIds.map(id => `"${id}"`).join(',')})`
+  );
+  return statuses.data;
+}
+
+/**
+ * Task types enabled on this project's schema (Roto, Comp, etc.).
+ * Falls back to all Type rows if schema introspection fails.
+ */
+export async function fetchTaskTypes(projectId) {
+  const s = getSession();
+  const exclude = new Set([
+    'Shot', 'Sequence', 'Episode', 'Folder', 'Project',
+    'AssetBuild', 'Asset Version', 'AssetVersion', 'Asset',
+  ]);
+
+  if (projectId) {
+    try {
+      const proj = await s.query(
+        `select project_schema.id from Project where id is "${projectId}"`,
+      );
+      const psId = proj.data[0]?.project_schema?.id;
+      if (psId) {
+        const schemas = await s.query(
+          `select type.id, type.name, object_type.name
+           from Schema where project_schema_id is "${psId}"`,
+        );
+        const seen = new Set();
+        const types = [];
+        for (const sc of schemas.data) {
+          const id = sc.type?.id;
+          const name = sc.type?.name;
+          if (!id || !name || seen.has(id)) continue;
+          if (exclude.has(sc.object_type?.name)) continue;
+          seen.add(id);
+          types.push({ id, name });
+        }
+        if (types.length) {
+          types.sort((a, b) => a.name.localeCompare(b.name));
+          return types;
+        }
+      }
+    } catch (err) {
+      console.warn('[fetchTaskTypes] schema lookup failed:', err);
+    }
+  }
+
+  const all = await s.query(`select id, name from Type order by name`);
+  return (all.data || [])
+    .filter((t) => t.id && t.name)
+    .map((t) => ({ id: t.id, name: t.name }));
+}
+
+/** Create a task under a shot (admin workflow). */
+export async function createTaskOnShot({
+  shotId,
+  projectId,
+  typeId,
+  name,
+  statusId,
+} = {}) {
+  if (!shotId) throw new Error('Need a shot to create a task');
+  if (!typeId) throw new Error('Pick a task type');
+
+  const s = getSession();
+
+  let typeName = name;
+  if (!typeName) {
+    const t = await s.query(`select name from Type where id is "${typeId}"`);
+    typeName = t.data[0]?.name || 'Task';
+  }
+
+  let sid = statusId;
+  if (!sid && projectId) {
+    const statuses = await fetchTaskStatuses(projectId);
+    const preferred =
+      statuses.find((st) => /not started|ready to start|awaiting|pending|todo/i.test(st.name))
+      || statuses[0];
+    sid = preferred?.id;
+  }
+  if (!sid) {
+    const statuses = await s.query(`select id, name from Status limit 50`);
+    const preferred =
+      statuses.data.find((st) => /not started|ready|pending|todo/i.test(st.name))
+      || statuses.data[0];
+    sid = preferred?.id;
+  }
+  if (!sid) throw new Error('No status available for new tasks');
+
+  const result = await s.create('Task', {
+    name: typeName,
+    type_id: typeId,
+    parent_id: shotId,
+    status_id: sid,
+  });
+  const task = result.data;
+  if (!task?.id) throw new Error('Task create returned no id');
+
+  return {
+    id: task.id,
+    name: task.name || typeName,
+    type: typeName,
+    status: {
+      id: sid,
+      name: task.status?.name || 'Unknown',
+      color: task.status?.color || '',
+    },
+    assignee: '',
+    assigneeIds: [],
+  };
+}
+
+/** Look up a Status by exact name, then fuzzy QC Ready variants. */
+export async function findStatusByName(names = ['QC Ready']) {
+  const s = getSession();
+  const wanted = (Array.isArray(names) ? names : [names]).filter(Boolean);
+  for (const name of wanted) {
+    const exact = await s.query(
+      `select id, name, color from Status where name is "${escapeFql(name)}" limit 1`,
+    );
+    if (exact.data[0]) return exact.data[0];
+  }
+  // Fuzzy: any status matching /qc\s*ready/i
+  const all = await s.query(`select id, name, color from Status`);
+  const hit = (all.data || []).find((st) => /qc\s*ready/i.test(st.name || ''));
+  return hit || null;
+}
+
+/** Statuses valid for Task schemas only (excludes Shot-only statuses). */
+export async function fetchTaskStatuses(projectId) {
+  const s = getSession();
+  const proj = await s.query(
+    `select project_schema.id from Project where id is "${projectId}"`
+  );
+  const psId = proj.data[0]?.project_schema?.id;
+  if (!psId) return [];
+
+  const schemas = await s.query(
+    `select id, object_type.name from Schema where project_schema_id is "${psId}"`
+  );
+  const exclude = new Set([
+    'Shot', 'Sequence', 'Episode', 'Folder', 'Project',
+    'AssetBuild', 'Asset Version', 'AssetVersion', 'Asset',
+  ]);
+  const schemaIds = schemas.data
+    .filter((sc) => !exclude.has(sc.object_type?.name))
+    .map((sc) => sc.id);
+  if (!schemaIds.length) return fetchShotStatuses(projectId);
+
+  const ss = await s.query(
+    `select status_id from SchemaStatus where schema_id in (${schemaIds.map((id) => `"${id}"`).join(',')})`
+  );
+  const statusIds = [...new Set(ss.data.map((x) => x.status_id).filter(Boolean))];
+  if (!statusIds.length) return [];
+
+  const statuses = await s.query(
+    `select id, name, color from Status where id in (${statusIds.map((id) => `"${id}"`).join(',')})`
   );
   return statuses.data;
 }
@@ -457,13 +794,13 @@ export async function updateTaskStatus(taskId, statusId) {
   return getSession().update('Task', [taskId], { status_id: statusId });
 }
 
-export async function createNote(parentId, parentType, text, { frameNumber, annotationBlob, categoryId } = {}) {
+export async function createNote(parentId, parentType, text, { frameNumber, annotationBlob, categoryId, isTodo = true } = {}) {
   const s = getSession();
   const noteData = {
     content: text,
     parent_id: parentId,
     parent_type: parentType,
-    is_todo: true,
+    is_todo: !!isTodo,
   };
   if (_userId) noteData.user_id = _userId;
   if (frameNumber != null) noteData.frame_number = frameNumber;
@@ -835,9 +1172,31 @@ export function getComponentUrl(componentId) {
   return s.getComponentUrl(componentId);
 }
 
-/** Returns a same-origin proxied URL for a component (avoids CORS for video) */
-export function getProxiedComponentUrl(componentId) {
+/**
+ * URL suitable for <video src>.
+ * - Web (Vercel): same-origin /api/proxy to avoid CORS
+ * - CEP / file / localhost: direct ftrack URL (includes apiKey query params)
+ */
+export function getPlayableComponentUrl(componentId) {
   const directUrl = getComponentUrl(componentId);
   if (!directUrl) return null;
-  return `/api/proxy?url=${encodeURIComponent(directUrl)}`;
+
+  try {
+    if (typeof window !== 'undefined') {
+      if (window.__adobe_cep__) return directUrl;
+      if (window.location?.protocol === 'file:') return directUrl;
+      const host = window.location?.hostname || '';
+      if (host === 'localhost' || host === '127.0.0.1') return directUrl;
+    }
+  } catch {
+    return directUrl;
+  }
+
+  const base = String(import.meta.env.VITE_APP_URL || '').replace(/\/+$/, '');
+  return `${base}/api/proxy?url=${encodeURIComponent(directUrl)}`;
+}
+
+/** @deprecated use getPlayableComponentUrl */
+export function getProxiedComponentUrl(componentId) {
+  return getPlayableComponentUrl(componentId);
 }

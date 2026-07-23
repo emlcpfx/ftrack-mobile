@@ -4,12 +4,13 @@ import {
   fetchReviews, fetchReviewShots, fetchReviewThumbnails, fetchTaskStatusesByShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchProjectMembers, assignUserToShots, unassignUserFromShots,
+  fetchTaskTypes, createTaskOnShot, fetchTasksForShot,
   updateShotStatus, bulkUpdateStatus, updateVersionStatus, updateTaskStatus,
   bulkUpdateTaskStatus, bulkUpdateVersionStatus,
   createNote as apiCreateNote, createReply as apiCreateReply,
   fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories, fetchNoteCounts,
-  getThumbnailUrl, getComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
+  getThumbnailUrl, getComponentUrl, getPlayableComponentUrl, getProxiedComponentUrl, fetchVersionComponents,
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
   getReviewUrl, fetchLatestVersionForTask, fetchLatestVersionForShot,
@@ -18,7 +19,9 @@ import {
 } from "./api/ftrack";
 import { isAePanel } from "./ae/bridge.js";
 import AeWorkspace from "./ae/AeWorkspace.jsx";
+import AePublish from "./ae/AePublish.jsx";
 import AeAlerts from "./ae/AeAlerts.jsx";
+import { runClientGeminiChat } from "./chat/clientChat.js";
 import { resolveAeProject, persistSharedProjectId } from "./ae/projectContext.js";
 import { fetchAeAlerts } from "./ae/alerts.js";
 
@@ -110,10 +113,12 @@ const css = `
   /* ── Bottom Nav ── */
   .bottom-nav { position:absolute; bottom:0; left:0; right:0; height:68px; background:var(--surface); border-top:1px solid var(--border); display:flex; align-items:center; justify-content:space-around; padding-bottom:env(safe-area-inset-bottom); z-index:100; }
   .nav-item { display:flex; flex-direction:column; align-items:center; gap:4px; padding:8px 20px; cursor:pointer; position:relative; }
-  .nav-icon { font-size:20px; transition:transform .2s; }
+  .nav-icon { font-size:20px; transition:transform .2s; line-height:1; display:flex; align-items:center; justify-content:center; height:22px; }
+  .nav-icon img { width:20px; height:20px; border-radius:4px; display:block; object-fit:cover; }
   .nav-label { font-size:10px; font-weight:600; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); transition:color .2s; }
   .nav-item.active .nav-label { color:var(--accent); }
   .nav-item.active .nav-icon { transform:translateY(-2px); }
+  .ae-panel .nav-item { padding:8px 10px; }
   .nav-pill { position:absolute; top:4px; right:12px; background:var(--accent); border-radius:10px; padding:1px 6px; font-size:9px; font-weight:700; color:#fff; }
   .ae-panel .nav-pill { background:var(--red); }
 
@@ -522,6 +527,9 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
   const [currentStatus, setCurrentStatus] = useState(shot.status);
   const [toast, setToast] = useState("");
   const [videoUrl, setVideoUrl] = useState(null);
+  const [mediaError, setMediaError] = useState('');
+  const [mediaLoading, setMediaLoading] = useState(false);
+  const componentCandidates = useRef([]);
   const [statuses, setStatuses] = useState([]);
   const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState(null);
@@ -656,20 +664,62 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
 
   // Try to load video component
   useEffect(() => {
-    if (!shot.versionId) return;
+    let cancelled = false;
+    setVideoUrl(null);
+    setMediaError('');
+    componentCandidates.current = [];
+    if (!shot.versionId) return undefined;
+
+    setMediaLoading(true);
     fetchVersionComponents(shot.versionId)
       .then((components) => {
-        // Prefer the transcoded review MP4, then any video file
-        const reviewable =
-          components.find(c => c.name === 'ftrackreview-mp4') ||
-          components.find(c => c.file_type === '.mp4') ||
-          components.find(c => c.file_type === '.mov' || c.file_type === '.webm');
-        if (reviewable) {
-          const url = getProxiedComponentUrl(reviewable.id);
-          if (url) setVideoUrl(url);
+        if (cancelled) return;
+        const list = components || [];
+        // Prefer review proxy, then common video types, then anything with a media extension
+        const ranked = [
+          ...list.filter((c) => c.name === 'ftrackreview-mp4'),
+          ...list.filter((c) => c.name === 'ftrackreview-webm'),
+          ...list.filter((c) => c.file_type === '.mp4' && c.name !== 'ftrackreview-mp4'),
+          ...list.filter((c) => ['.mov', '.webm', '.m4v'].includes(c.file_type)),
+          ...list.filter((c) => /\.(mp4|mov|webm|m4v)$/i.test(c.name || '')),
+        ];
+        // Dedupe by id
+        const seen = new Set();
+        const unique = ranked.filter((c) => {
+          if (!c?.id || seen.has(c.id)) return false;
+          seen.add(c.id);
+          return true;
+        });
+        componentCandidates.current = unique;
+
+        if (!unique.length) {
+          setMediaError(
+            list.length
+              ? 'No playable video on this version (encode may still be running).'
+              : 'No media components on this version yet.',
+          );
+          setMediaLoading(false);
+          return;
         }
+
+        const url = getPlayableComponentUrl(unique[0].id);
+        if (!url) {
+          setMediaError('Could not resolve media URL.');
+          setMediaLoading(false);
+          return;
+        }
+        setVideoUrl(url);
+        setMediaLoading(false);
       })
-      .catch(err => console.error('[Player] Component fetch error:', err));
+      .catch((err) => {
+        console.error('[Player] Component fetch error:', err);
+        if (!cancelled) {
+          setMediaError(err.message || 'Failed to load media components');
+          setMediaLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [shot.versionId]);
 
   // Fetch statuses and note categories
@@ -969,12 +1019,37 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
       {/* Video / Canvas area */}
       <div className="video-area">
         {videoUrl ? (
-          <video ref={videoRef} src={videoUrl} controls playsInline preload="metadata" />
+          <video
+            ref={videoRef}
+            key={videoUrl}
+            src={videoUrl}
+            controls
+            playsInline
+            preload="metadata"
+            onError={() => {
+              // Try next candidate component
+              const rest = componentCandidates.current.slice(1);
+              componentCandidates.current = rest;
+              if (rest[0]?.id) {
+                const next = getPlayableComponentUrl(rest[0].id);
+                if (next) {
+                  setVideoUrl(next);
+                  return;
+                }
+              }
+              setVideoUrl(null);
+              setMediaError('Video failed to play. Review proxy may still be encoding — try again in a minute.');
+            }}
+          />
         ) : (
           <div className="video-placeholder">
             <div className="play-icon">&#9654;</div>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              {shot.versionId ? "Loading media..." : "No version media"}
+            <div style={{ fontSize: 12, color: mediaError ? 'var(--red)' : 'var(--muted)', padding: '0 16px', textAlign: 'center' }}>
+              {!shot.versionId
+                ? 'No version media'
+                : mediaLoading
+                  ? 'Loading media…'
+                  : mediaError || 'No playable media'}
             </div>
           </div>
         )}
@@ -2096,6 +2171,9 @@ function ShotsTab() {
   const [addingToReview, setAddingToReview] = useState(false);
   const [newRevName, setNewRevName] = useState('');
   const [creatingRev, setCreatingRev] = useState(false);
+  const [taskTypes, setTaskTypes] = useState([]);
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [detailTasks, setDetailTasks] = useState([]); // tasks for open shot
   const saveViewName = useRef('');
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2200); };
@@ -2187,6 +2265,14 @@ function ShotsTab() {
         setMembers(users);
       })
       .catch(err => console.warn('[ShotsTab] Members error:', err));
+
+    // Task types for Add task
+    fetchTaskTypes(selectedProjectId)
+      .then((types) => {
+        console.log('[ShotsTab] Loaded', types.length, 'task types');
+        setTaskTypes(types);
+      })
+      .catch((err) => console.warn('[ShotsTab] Task types error:', err));
 
     // Fetch custom attribute configurations
     fetchCustomAttributeConfigs()
@@ -2370,6 +2456,22 @@ function ShotsTab() {
 
   const openShotDetail = async (shot) => {
     setDetailShot(shot);
+    const shotId = shot.shotId || shot.id;
+    const siblingTasks = shot.tasks?.length
+      ? shot.tasks
+      : (shot.type ? [{
+          id: shot.id,
+          name: shot.type || shot.name,
+          type: shot.type,
+          status: shot.status,
+          assignee: shot.artist,
+          assigneeIds: shot.assigneeIds || [],
+        }] : []);
+    setDetailTasks(siblingTasks);
+    // Refresh tasks from API so Add task stays accurate
+    fetchTasksForShot(shotId)
+      .then((tasks) => setDetailTasks(tasks))
+      .catch(() => {});
     // Load versions — use task ID if this is a task entry, otherwise shot ID
     {
       setVersionsLoading(true);
@@ -2394,6 +2496,71 @@ function ShotsTab() {
       } finally {
         setVersionsLoading(false);
       }
+    }
+  };
+
+  const rebuildFlatForShot = (shotId, shotName, thumb, tasks) => {
+    setShots((prev) => {
+      const others = prev.filter((s) => s.shotId !== shotId);
+      if (!tasks.length) {
+        return [
+          ...others,
+          {
+            id: shotId,
+            shotId,
+            name: shotName,
+            type: '',
+            status: { id: null, name: 'Unknown', color: '#6b7280' },
+            thumb,
+            artist: '',
+            tasks: [],
+            assigneeIds: [],
+          },
+        ];
+      }
+      return [
+        ...others,
+        ...tasks.map((t) => ({
+          id: t.id,
+          shotId,
+          name: shotName,
+          type: t.type,
+          description: t.description || '',
+          status: {
+            id: t.status?.id,
+            name: t.status?.name || 'Unknown',
+            color: normalizeColor(t.status?.color),
+          },
+          thumb,
+          artist: t.assignee || '',
+          tasks,
+          assigneeIds: t.assigneeIds || [],
+        })),
+      ];
+    });
+  };
+
+  const handleCreateTask = async (type) => {
+    if (!detailShot || !selectedProjectId || creatingTask) return;
+    const shotId = detailShot.shotId || detailShot.id;
+    setCreatingTask(true);
+    try {
+      await createTaskOnShot({
+        shotId,
+        projectId: selectedProjectId,
+        typeId: type.id,
+        name: type.name,
+      });
+      const tasks = await fetchTasksForShot(shotId);
+      setDetailTasks(tasks);
+      rebuildFlatForShot(shotId, detailShot.name, detailShot.thumb, tasks);
+      setStatusModal(null);
+      showToast(`Added ${type.name}`);
+    } catch (err) {
+      console.error('[ShotsTab] create task failed:', err);
+      showToast(err.message || 'Create task failed');
+    } finally {
+      setCreatingTask(false);
     }
   };
 
@@ -2429,17 +2596,22 @@ function ShotsTab() {
         showToast(`Status \u2192 ${newStatus.name}`);
       } else if (statusModal === "task-status" && editingTask) {
         await updateTaskStatus(editingTask.taskId, newStatus.id);
+        setDetailTasks((prev) =>
+          prev.map((t) =>
+            t.id === editingTask.taskId ? { ...t, status: statusWithColor } : t,
+          ),
+        );
         setShots(s => s.map(sh => {
-          if (sh.id !== editingTask.shotId) return sh;
+          if (sh.id !== editingTask.shotId && sh.shotId !== editingTask.shotId) return sh;
           const updatedTasks = (sh.tasks || []).map(t =>
             t.id === editingTask.taskId ? { ...t, status: statusWithColor } : t
           );
-          // If single-task shot, also update the shot-level status display
-          const merged = updatedTasks.length === 1 ? updatedTasks[0] : null;
+          // If this row is the edited task, update its status display too
+          const isEditedRow = sh.id === editingTask.taskId;
           return {
             ...sh,
             tasks: updatedTasks,
-            ...(merged ? { status: statusWithColor } : {}),
+            ...(isEditedRow ? { status: statusWithColor } : {}),
           };
         }));
         showToast(`${editingTask.taskName} \u2192 ${newStatus.name}`);
@@ -2874,24 +3046,48 @@ function ShotsTab() {
     );
   }
 
-  // ── Picker views (full screen) — status change + assignee ──
-  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "assignee") {
+  // ── Picker views (full screen) — status change + assignee + add task ──
+  if (statusModal === "bulk" || statusModal === "shot-status" || statusModal === "task-status" || statusModal === "assignee" || statusModal === "add-task") {
     const isAssignee = statusModal === "assignee";
-    const title = isAssignee ? `Assign ${selected.size} shots`
+    const isAddTask = statusModal === "add-task";
+    const title = isAddTask ? `Add task — ${detailShot?.name || 'shot'}`
+      : isAssignee ? `Assign ${selected.size} shots`
       : statusModal === "bulk" ? `Set status for ${selected.size} shots`
       : statusModal === "task-status" && editingTask ? editingTask.taskName
       : "Change Status";
 
-    const items = isAssignee ? members : statuses;
+    const items = isAddTask ? taskTypes : isAssignee ? members : statuses;
     const assignedIds = isAssignee ? getAssignedUserIds() : new Set();
 
     return (
       <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         <div className="header">
-          <div className="back-btn" onClick={() => setStatusModal(null)}>&#8592; Back</div>
+          <div className="back-btn" onClick={() => !creatingTask && setStatusModal(null)}>&#8592; Back</div>
           <div className="header-title" style={{ fontSize: 15 }}>{title}</div>
         </div>
         <div className="scroll">
+          {isAddTask && (
+            <>
+              {creatingTask && <div className="loading">Creating task…</div>}
+              {!creatingTask && taskTypes.length === 0 && (
+                <div style={{ color: 'var(--muted)', fontSize: 13, padding: '16px 20px' }}>
+                  No task types found for this project.
+                </div>
+              )}
+              {!creatingTask && taskTypes.map((t) => (
+                <div
+                  key={t.id}
+                  className="shot-list-item"
+                  onClick={() => handleCreateTask(t)}
+                >
+                  <div className="shot-list-info">
+                    <div className="shot-list-name">{t.name}</div>
+                  </div>
+                  <span style={{ color: 'var(--accent)', fontSize: 18, fontWeight: 600 }}>+</span>
+                </div>
+              ))}
+            </>
+          )}
           {isAssignee && members.map(u => (
             <div key={u.id} className="shot-list-item" onClick={() => toggleAssignee(u)} style={assignedIds.has(u.id) ? { background: 'rgba(76,175,80,.1)' } : {}}>
               <div className={`select-circle ${assignedIds.has(u.id) ? "checked" : ""}`} style={{ width: 28, height: 28, borderRadius: '50%' }}>
@@ -2903,7 +3099,7 @@ function ShotsTab() {
               </div>
             </div>
           ))}
-          {!isAssignee && statuses.map(s => (
+          {!isAssignee && !isAddTask && statuses.map(s => (
             <div key={s.id} className="shot-list-item" onClick={() => applyStatus(s)}>
               <span style={{ background: s.color, width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
               <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
@@ -2911,7 +3107,7 @@ function ShotsTab() {
               {statusModal === "task-status" && editingTask?.currentStatusId === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
           ))}
-          {items.length === 0 && (
+          {!isAddTask && items.length === 0 && (
             <div className="empty">
               <div className="empty-text">{isAssignee ? "No project members found." : "No statuses available."}</div>
             </div>
@@ -2926,7 +3122,7 @@ function ShotsTab() {
     <div className="shot-detail" style={{ position: "relative" }}>
       <Toast msg={toast} />
       <div className="header">
-        <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); }}>&#8592; Shots</div>
+        <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); setDetailTasks([]); }}>&#8592; Shots</div>
         <div className="header-title" style={{ fontSize: 15 }}>{detailShot.name}</div>
       </div>
 
@@ -2949,6 +3145,49 @@ function ShotsTab() {
       </div>
 
       <div className="scroll">
+        <div className="section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>Tasks ({detailTasks.length})</span>
+          <button
+            type="button"
+            onClick={() => setStatusModal('add-task')}
+            style={{
+              background: 'transparent', border: '1px solid var(--accent)', borderRadius: 6,
+              padding: '4px 10px', color: 'var(--accent)', fontSize: 11, fontWeight: 600,
+              cursor: 'pointer', fontFamily: 'var(--font-body)',
+            }}
+          >
+            + Add task
+          </button>
+        </div>
+        {detailTasks.length === 0 && (
+          <div style={{ color: 'var(--muted)', fontSize: 13, padding: '8px 20px 16px' }}>
+            No tasks on this shot yet.
+          </div>
+        )}
+        {detailTasks.map((t) => (
+          <div key={t.id} className="shot-list-item" style={{ cursor: 'default' }}>
+            <div className="shot-list-info">
+              <div className="shot-list-name">{t.type || t.name}</div>
+              {t.assignee && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{t.assignee}</div>}
+            </div>
+            <div className="shot-list-status" style={{ flexShrink: 0 }}>
+              <StatusPill
+                status={{ ...t.status, color: normalizeColor(t.status?.color) }}
+                small
+                onClick={() => {
+                  setEditingTask({
+                    shotId: detailShot.shotId || detailShot.id,
+                    taskId: t.id,
+                    taskName: t.type || t.name,
+                    currentStatusId: t.status?.id,
+                  });
+                  setStatusModal('task-status');
+                }}
+              />
+            </div>
+          </div>
+        ))}
+
         <div className="section-label">Versions ({versions.length})</div>
         {versionsLoading && <div className="loading">Loading versions...</div>}
         {!versionsLoading && versions.length === 0 && (
@@ -3240,30 +3479,58 @@ function ChatTab() {
       const ftrackCreds = getFtrackCreds();
       if (!ftrackCreds) throw new Error('Not logged in to ftrack');
 
-      const resp = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      let botText = '';
+
+      // Gemini runs client-side (works in AE CEP + local vite; /api/chat needs Vercel)
+      if (llmSettings.provider === 'gemini') {
+        botText = await runClientGeminiChat({
           messages: conversationRef.current,
-          provider: llmSettings.provider,
-          llmApiKey: llmSettings.apiKey,
-          ftrackServer: ftrackCreds.server,
-          ftrackUser: ftrackCreds.user,
-          ftrackApiKey: ftrackCreds.apiKey,
+          apiKey: llmSettings.apiKey,
           projectId: selectedProjectId || null,
           projectName: selectedProject?.name || null,
           customPrompt: customPrompt || undefined,
-        }),
-      });
+        });
+      } else {
+        const chatBase = (import.meta.env.VITE_CHAT_API_URL || '').replace(/\/+$/, '');
+        const chatUrl = `${chatBase}/api/chat`;
+        let resp;
+        try {
+          resp = await fetch(chatUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              messages: conversationRef.current,
+              provider: llmSettings.provider,
+              llmApiKey: llmSettings.apiKey,
+              ftrackServer: ftrackCreds.server,
+              ftrackUser: ftrackCreds.user,
+              ftrackApiKey: ftrackCreds.apiKey,
+              projectId: selectedProjectId || null,
+              projectName: selectedProject?.name || null,
+              customPrompt: customPrompt || undefined,
+            }),
+          });
+        } catch (netErr) {
+          throw new Error(
+            `Chat API unreachable (${chatUrl || '/api/chat'}). `
+            + 'Claude needs the Vercel /api/chat backend — use Gemini in the panel, '
+            + 'or set VITE_CHAT_API_URL to your deployed app.',
+          );
+        }
 
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data.error || 'Request failed');
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
+        botText = data.response || 'Done.';
+      }
 
-      const botText = data.response || 'Done.';
       conversationRef.current.push({ role: 'assistant', content: botText });
       addMsg('bot', botText);
     } catch (err) {
-      addMsg('error', err.message);
+      addMsg('error', err.message || String(err));
+      // Roll back the user turn from LLM history so retries aren't doubled
+      if (conversationRef.current.at(-1)?.role === 'user') {
+        conversationRef.current.pop();
+      }
     } finally {
       setProcessing(false);
     }
@@ -3685,6 +3952,7 @@ export default function App() {
   });
   const [showNotifSettings, setShowNotifSettings] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
+  const [aeFocus, setAeFocus] = useState(null);
   const [restoring, setRestoring] = useState(true);
 
   // Persist active tab
@@ -3692,12 +3960,12 @@ export default function App() {
     try { sessionStorage.setItem('ftrack_tab', tab); } catch {}
   }, [tab]);
 
-  // Browser shouldn't stay on AE tab
+  // Browser shouldn't stay on AE / Publish tabs
   useEffect(() => {
-    if (!inAe && tab === 'ae') setTab('reviews');
+    if (!inAe && (tab === 'ae' || tab === 'publish')) setTab('reviews');
   }, [inAe, tab]);
 
-  // AE: poll assigned "needs work" tasks for bell badge (no Web Push)
+  // AE: poll assigned "needs work" tasks across all projects for bell badge
   useEffect(() => {
     if (!inAe || !auth) {
       setAlertCount(0);
@@ -3706,10 +3974,7 @@ export default function App() {
     let cancelled = false;
     const tick = async () => {
       try {
-        const projectId = sessionStorage.getItem('ftrack_ae_project')
-          || sessionStorage.getItem('ftrack_shots_project')
-          || undefined;
-        const { count } = await fetchAeAlerts({ projectId: projectId || undefined });
+        const { count } = await fetchAeAlerts({});
         if (!cancelled) setAlertCount(count);
       } catch {
         if (!cancelled) setAlertCount(0);
@@ -3775,21 +4040,25 @@ export default function App() {
             inAe ? (
               <AeAlerts
                 onClose={() => setShowNotifSettings(false)}
-                projectId={(() => {
-                  try {
-                    return sessionStorage.getItem('ftrack_ae_project')
-                      || sessionStorage.getItem('ftrack_shots_project')
-                      || '';
-                  } catch { return ''; }
-                })()}
                 onCountChange={setAlertCount}
+                onOpenAlert={(focus) => {
+                  setAeFocus({ ...focus, _ts: Date.now() });
+                  setShowNotifSettings(false);
+                  setTab('ae');
+                }}
               />
             ) : (
               <NotificationSettings onClose={() => setShowNotifSettings(false)} />
             )
           ) : (
             <>
-              {tab === "ae" && inAe && <AeWorkspace />}
+              {tab === "ae" && inAe && (
+                <AeWorkspace
+                  focusRequest={aeFocus}
+                  onFocusHandled={() => setAeFocus(null)}
+                />
+              )}
+              {tab === "publish" && inAe && <AePublish />}
               {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
               {tab === "shots" && <ShotsTab />}
               {tab === "chat" && <ChatTab />}
@@ -3797,31 +4066,58 @@ export default function App() {
           )}
         </div>
         <div className="bottom-nav">
-          {inAe && (
-            <div className={`nav-item ${tab === "ae" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("ae"); }}>
-              <div className="nav-icon">&#9881;</div>
-              <div className="nav-label">AE</div>
-            </div>
+          {inAe ? (
+            <>
+              <div className={`nav-item ${tab === "ae" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("ae"); }}>
+                <div className="nav-icon">
+                  <img src={`${import.meta.env.BASE_URL}ae-logo.png`} alt="AE" />
+                </div>
+                <div className="nav-label">AE</div>
+              </div>
+              <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("shots"); }}>
+                <div className="nav-icon">&#127902;</div>
+                <div className="nav-label">Shots</div>
+              </div>
+              <div className={`nav-item ${tab === "publish" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("publish"); }}>
+                <div className="nav-icon">↑</div>
+                <div className="nav-label">Publish</div>
+              </div>
+              <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("reviews"); }}>
+                <div className="nav-icon">&#127916;</div>
+                <div className="nav-label">Reviews</div>
+              </div>
+              <div className={`nav-item ${showNotifSettings ? "active" : ""}`} onClick={() => setShowNotifSettings(true)}>
+                <div className="nav-icon">&#128276;</div>
+                <div className="nav-label">Alerts</div>
+                {alertCount > 0 && (
+                  <div className="nav-pill">{alertCount > 99 ? '99+' : alertCount}</div>
+                )}
+              </div>
+              <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("chat"); }}>
+                <div className="nav-icon">&#128172;</div>
+                <div className="nav-label">Chat</div>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("reviews"); }}>
+                <div className="nav-icon">&#127916;</div>
+                <div className="nav-label">Reviews</div>
+              </div>
+              <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("shots"); }}>
+                <div className="nav-icon">&#127902;</div>
+                <div className="nav-label">Shots</div>
+              </div>
+              <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("chat"); }}>
+                <div className="nav-icon">&#128172;</div>
+                <div className="nav-label">Chat</div>
+              </div>
+              <div className={`nav-item ${showNotifSettings ? "active" : ""}`} onClick={() => setShowNotifSettings(true)}>
+                <div className="nav-icon">&#128276;</div>
+                <div className="nav-label">Alerts</div>
+              </div>
+            </>
           )}
-          <div className={`nav-item ${tab === "reviews" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("reviews"); }}>
-            <div className="nav-icon">&#127916;</div>
-            <div className="nav-label">Reviews</div>
-          </div>
-          <div className={`nav-item ${tab === "shots" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("shots"); }}>
-            <div className="nav-icon">&#127902;</div>
-            <div className="nav-label">Shots</div>
-          </div>
-          <div className={`nav-item ${tab === "chat" ? "active" : ""}`} onClick={() => { setShowNotifSettings(false); setTab("chat"); }}>
-            <div className="nav-icon">&#128172;</div>
-            <div className="nav-label">Chat</div>
-          </div>
-          <div className={`nav-item ${showNotifSettings ? "active" : ""}`} onClick={() => setShowNotifSettings(true)}>
-            <div className="nav-icon">&#128276;</div>
-            <div className="nav-label">Alerts</div>
-            {inAe && alertCount > 0 && (
-              <div className="nav-pill">{alertCount > 99 ? '99+' : alertCount}</div>
-            )}
-          </div>
         </div>
       </div>
     </>

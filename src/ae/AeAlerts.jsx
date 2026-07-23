@@ -31,11 +31,12 @@ const css = `
   }
   .ae-alerts-card {
     background:var(--card); border:1px solid var(--border); border-radius:10px;
-    padding:12px; margin-bottom:8px;
+    padding:12px; margin-bottom:8px; cursor:pointer;
   }
+  .ae-alerts-card:hover { border-color:var(--accent); }
   .ae-alerts-shot { font-size:14px; font-weight:600; margin-bottom:4px; }
   .ae-alerts-meta { font-size:11px; color:var(--muted); margin-bottom:8px; }
-  .ae-alerts-row { display:flex; align-items:center; gap:8px; }
+  .ae-alerts-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .ae-alerts-status {
     display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:600;
   }
@@ -44,6 +45,9 @@ const css = `
     margin-left:auto; background:transparent; border:1px solid var(--border);
     color:var(--accent); border-radius:6px; padding:4px 10px; font-size:11px;
     font-weight:600; cursor:pointer; font-family:inherit;
+  }
+  .ae-alerts-btn.primary {
+    background:var(--accent); color:#fff; border-color:var(--accent);
   }
   .ae-alerts-empty { text-align:center; color:var(--muted); padding:32px 16px; font-size:13px; }
   .ae-alerts-hint { font-size:11px; color:var(--muted); margin-bottom:12px; line-height:1.4; }
@@ -72,8 +76,9 @@ const css = `
 
 /**
  * In-panel alert inbox for AE (API poll, not Web Push).
+ * projectId omitted = all projects (default).
  */
-export default function AeAlerts({ onClose, projectId, onCountChange }) {
+export default function AeAlerts({ onClose, projectId, onCountChange, onOpenAlert }) {
   const [alerts, setAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -101,7 +106,8 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
     return () => clearInterval(id);
   }, [refresh]);
 
-  const onDismiss = (task) => {
+  const onDismiss = (task, e) => {
+    e?.stopPropagation?.();
     dismissAeAlert(task.id, task.status?.id);
     setAlerts((prev) => {
       const next = prev.filter((t) => t.id !== task.id);
@@ -114,6 +120,17 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
     dismissAllAeAlerts(alerts);
     setAlerts([]);
     onCountChange?.(0);
+  };
+
+  const openAlert = (t, e) => {
+    e?.stopPropagation?.();
+    if (!t.shotId) return;
+    onOpenAlert?.({
+      shotId: t.shotId,
+      shotName: t.shotName,
+      taskId: t.id,
+      projectId: t.projectId,
+    });
   };
 
   const saveWatch = () => {
@@ -136,7 +153,7 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
       </div>
       <div className="ae-alerts-scroll">
         <p className="ae-alerts-hint">
-          Assigned tasks in Fix / Changes Needed / etc. Polled from ftrack — no Web Push.
+          Your assigned tasks in watched statuses (all projects). Tap Open to jump to the shot.
         </p>
 
         <div className="ae-alerts-actions">
@@ -159,7 +176,11 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
         {alerts.map((t) => {
           const color = normalizeColor(t.status.color);
           return (
-            <div key={t.id} className="ae-alerts-card">
+            <div
+              key={t.id}
+              className="ae-alerts-card"
+              onClick={(e) => openAlert(t, e)}
+            >
               <div className="ae-alerts-shot">{t.shotName || t.name}</div>
               <div className="ae-alerts-meta">
                 {t.type}{t.projectName ? ` · ${t.projectName}` : ''}
@@ -169,7 +190,14 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
                   <span className="ae-alerts-dot" style={{ background: color }} />
                   {t.status.name}
                 </span>
-                <button type="button" className="ae-alerts-btn" onClick={() => onDismiss(t)}>
+                <button
+                  type="button"
+                  className="ae-alerts-btn primary"
+                  onClick={(e) => openAlert(t, e)}
+                >
+                  Open
+                </button>
+                <button type="button" className="ae-alerts-btn" onClick={(e) => onDismiss(t, e)}>
                   Dismiss
                 </button>
               </div>
@@ -186,7 +214,7 @@ export default function AeAlerts({ onClose, projectId, onCountChange }) {
             placeholder="Fix, Changes Needed, Retake"
           />
           <div className="ae-alerts-watch-note">
-            Saved on blur. Re-alerts if status changes again after dismiss.
+            Exact names only. Saved on blur. Re-alerts if status changes after dismiss.
           </div>
         </div>
       </div>

@@ -1,0 +1,102 @@
+VFX Tools LLC Source Available License
+Version 1.0 (2026)
+
+Copyright (c) 2026 VFX Tools LLC. All rights reserved.
+
+IMPORTANT: This is NOT an open-source license. It is a source-available
+proprietary license. If you need rights not granted here (including
+resale, OEM, or white-label), contact the copyright holder.
+
+
+1. Definitions
+
+  "Software" means this repository and all source, binaries, docs, and
+  assets distributed with it, including modified versions you create.
+
+  "You" means an individual or legal entity exercising rights under this
+  license.
+
+  "Internal Use" means using the Software to support your own production,
+  post-production, VFX, animation, or similar work — including commercial
+  client work — on your own machines or infrastructure that you control.
+
+  "Compete" / "Competing Product" means any product, service, hosted
+  offering, plugin, panel, app, or feature set that is marketed as or
+  substantially substitutes for ftrack, ftrack Studio, ftrack Review,
+  ftrack Connect, or similar production-tracking / review products.
+
+  "ftrack Entity" means ftrack AB, ftrack Ltd, Backlight, any parent,
+  subsidiary, or affiliate of the foregoing, and any contractor acting
+  on their behalf to develop or improve a Competing Product.
+
+
+2. What you MAY do (granted license)
+
+  Subject to the restrictions below, the copyright holder grants you a
+  free, non-exclusive, non-transferable, worldwide license to:
+
+  (a) Use the Software for Internal Use (commercial work for your studio
+      or clients is allowed);
+  (b) Copy, modify, and build the Software for Internal Use;
+  (c) Deploy the Software for your own team / freelancers working on your
+      projects, provided they are bound by these same terms;
+  (d) Fork privately for Internal Use.
+
+  No trademark license is granted to "ftrack", "VFX Tools", or related
+  marks beyond nominative use needed to describe interoperability.
+
+
+3. What you may NOT do
+
+  You may NOT, without a separate written commercial agreement from the
+  copyright holder:
+
+  (a) Sell, rent, lease, license, sublicense, or otherwise commercialize
+      the Software (or a modified version) as a product or paid service;
+  (b) Offer the Software as SaaS, managed hosting, marketplace listing,
+      paid plugin, or paid support bundle where access to the Software is
+      the primary value;
+  (c) Redistribute the Software publicly (including public GitHub forks
+      that re-publish the full source) for others' general use;
+  (d) Use the Software to build, improve, train on, evaluate for
+      productization, or incorporate into a Competing Product;
+  (e) If you are a ftrack Entity (or acting for one): use, copy, modify,
+      review, or adapt the Software for any purpose related to a
+      Competing Product or ftrack's commercial offerings.
+
+
+4. Exclusive commercial rights
+
+  Only the copyright holder may sell, commercially license, or OEM the
+  Software. All other commercial exploitation of the Software as a
+  product is reserved.
+
+
+5. Contributions
+
+  Unless otherwise agreed in writing, any contribution you submit is
+  licensed to the copyright holder under this same license, and you
+  grant the copyright holder a perpetual, irrevocable, worldwide,
+  royalty-free right to use and relicense your contribution as part of
+  the Software.
+
+
+6. No warranty
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+  EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO MERCHANTABILITY,
+  FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT
+  SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+  LIABILITY ARISING FROM USE OF THE SOFTWARE.
+
+
+7. Termination
+
+  This license terminates automatically if you breach it. On termination
+  you must stop using the Software and destroy copies in your possession,
+  except for archival copies required by law.
+
+
+8. Contact
+
+  Commercial licensing / questions: eric@thevfxtools.com

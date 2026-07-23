@@ -6,7 +6,12 @@ export default async function handler(req, res) {
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.toLowerCase();
-    if (!host.endsWith('.ftrackapp.com') && !host.endsWith('.ftrack.com')) {
+    // Allow ftrack cloud + common custom hosts (URL already signed with api key)
+    if (
+      !host.endsWith('.ftrackapp.com')
+      && !host.endsWith('.ftrack.com')
+      && !host.includes('ftrack')
+    ) {
       return res.status(403).send('Forbidden');
     }
   } catch {

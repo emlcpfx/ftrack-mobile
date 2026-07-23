@@ -4,6 +4,10 @@
  */
 
 import { downloadToTemp, safeDownloadName } from './download.js';
+import {
+  getUploaderScriptPath,
+  getPythonCmd,
+} from './uploaderConfig.js';
 
 export function isAePanel() {
   return typeof window !== 'undefined' && !!window.__adobe_cep__;
@@ -50,6 +54,16 @@ function csi() {
   return _csi;
 }
 
+function nodeRequire(name) {
+  if (typeof window !== 'undefined' && typeof window.require === 'function') {
+    return window.require(name);
+  }
+  if (typeof require === 'function') {
+    return require(name);
+  }
+  throw new Error('Node require unavailable — enable CEP Node.js in manifest');
+}
+
 export function evalExtendScript(expression) {
   const cs = csi();
   if (!cs) return Promise.reject(new Error('AE bridge not initialized'));
@@ -76,6 +90,14 @@ export function getProjectName() {
   return evalExtendScript('getProjectName()');
 }
 
+export function getSelectedFootagePaths() {
+  return evalExtendScript('getSelectedFootagePaths()');
+}
+
+export function pickMediaFiles() {
+  return evalExtendScript('pickMediaFiles()');
+}
+
 /**
  * Import a local file into AE (optionally as a layer in the active comp).
  */
@@ -90,8 +112,6 @@ export function importFootage(filePath, { intoActiveComp = true, folderName = 'f
 
 /**
  * Download an ftrack component URL to temp, then import into AE.
- * @param {string} url - authenticated component URL from getComponentUrl
- * @param {{ name?: string, fileType?: string, intoActiveComp?: boolean }} opts
  */
 export async function downloadAndImport(url, opts = {}) {
   if (!isAePanel()) throw new Error('Not in After Effects panel');
@@ -107,4 +127,71 @@ export async function downloadAndImport(url, opts = {}) {
     folderName: opts.folderName || 'ftrack',
   });
   return { ...result, path };
+}
+
+/**
+ * Launch the CPFX ftrack_uploader.py with the given absolute file paths.
+ * Fire-and-forget (detached) — the Tk GUI owns the rest.
+ */
+export function launchFtrackUploader(filePaths, opts = {}) {
+  if (!isAePanel()) {
+    return Promise.reject(new Error('Not in After Effects panel'));
+  }
+  const paths = (filePaths || []).filter(Boolean);
+  if (!paths.length) {
+    return Promise.reject(new Error('No files to upload'));
+  }
+
+  const scriptPath = opts.scriptPath || getUploaderScriptPath();
+  const pythonCmd = opts.pythonCmd || getPythonCmd();
+
+  const fs = nodeRequire('fs');
+  const { spawn } = nodeRequire('child_process');
+
+  if (!scriptPath || !fs.existsSync(scriptPath)) {
+    return Promise.reject(
+      new Error(`Uploader script not found:\n${scriptPath}`),
+    );
+  }
+
+  for (const p of paths) {
+    if (!fs.existsSync(p)) {
+      return Promise.reject(new Error(`File not found: ${p}`));
+    }
+  }
+
+  try {
+    const child = spawn(pythonCmd, [scriptPath, ...paths], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+    child.unref();
+    return Promise.resolve({
+      ok: true,
+      count: paths.length,
+      scriptPath,
+      pythonCmd,
+    });
+  } catch (e) {
+    return Promise.reject(
+      new Error(
+        `Failed to launch Python (${pythonCmd}): ${e.message || e}. ` +
+          'Set the Python command in Publish settings if needed.',
+      ),
+    );
+  }
+}
+
+/** Read a local path into a browser File (for CEP Node → createComponent). */
+export async function fileFromPath(filePath) {
+  const fs = nodeRequire('fs');
+  const path = nodeRequire('path');
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`File not found: ${filePath}`);
+  }
+  const buf = fs.readFileSync(filePath);
+  const name = path.basename(filePath);
+  // Blob/File available in CEP Chromium
+  return new File([buf], name);
 }

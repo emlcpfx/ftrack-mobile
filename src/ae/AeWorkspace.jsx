@@ -3,9 +3,10 @@ import {
   fetchProjects,
   findShotsMatchingName,
   fetchTasksForShot,
-  fetchShotStatuses,
+  fetchTaskStatuses,
   fetchLatestVersionForTask,
   fetchLatestVersionForShot,
+  fetchShotVersions,
   fetchVersionComponents,
   fetchNotes,
   createNote,
@@ -15,6 +16,7 @@ import {
   pickAeImportComponent,
   fetchProjectMembers,
   setTaskAssignee,
+  assignUserToTask,
   getCurrentUserId,
 } from '../api/ftrack';
 import {
@@ -149,6 +151,7 @@ const aeCss = `
   }
   .ae-empty { padding:24px 16px; text-align:center; color:var(--muted); font-size:13px; }
   .ae-error { color:var(--red); font-size:12px; margin-top:6px; }
+  .ae-ok { color:var(--green); font-size:12px; margin-top:6px; }
 `;
 
 function AeSelect({ value, options, onChange, placeholder = 'Select…', disabled }) {
@@ -214,7 +217,7 @@ function StatusChip({ status, active, onClick }) {
   );
 }
 
-export default function AeWorkspace() {
+export default function AeWorkspace({ focusRequest = null, onFocusHandled }) {
   const [projects, setProjects] = useState([]);
   const [members, setMembers] = useState([]);
   const [projectId, setProjectId] = useState(() => {
@@ -232,6 +235,7 @@ export default function AeWorkspace() {
   const [tasks, setTasks] = useState([]);
   const [taskId, setTaskId] = useState('');
   const [statuses, setStatuses] = useState([]);
+  const [versions, setVersions] = useState([]);
   const [version, setVersion] = useState(null);
   const [components, setComponents] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -243,6 +247,8 @@ export default function AeWorkspace() {
   const [matching, setMatching] = useState(false);
   const lastCompName = useRef('');
   const lastShowCode = useRef('');
+  const matchGen = useRef(0);
+  const selectShotRef = useRef(null);
   const meId = getCurrentUserId();
 
   const showToast = useCallback((msg) => {
@@ -300,7 +306,7 @@ export default function AeWorkspace() {
   useEffect(() => {
     if (!projectId) return;
     persistSharedProjectId(projectId);
-    fetchShotStatuses(projectId)
+    fetchTaskStatuses(projectId)
       .then(setStatuses)
       .catch(() => setStatuses([]));
   }, [projectId]);
@@ -340,27 +346,21 @@ export default function AeWorkspace() {
     setNotes([]);
   }, []);
 
-  const ensureAssignee = useCallback(async (task, tid) => {
-    if (!tid || !meId) return task;
-    if (task?.assigneeIds?.includes(meId)) return task;
-    if (task?.assigneeIds?.length) return task; // already assigned to someone else
-    try {
-      await setTaskAssignee(tid, meId);
-      return {
-        ...task,
-        assigneeIds: [meId],
-        assignee: memberLabel(members.find((m) => m.id === meId)) || 'Me',
-      };
-    } catch (e) {
-      console.warn('auto-assign failed', e);
-      return task;
+  const loadVersionBundle = useCallback(async (ver, tid) => {
+    setVersion(ver);
+    if (ver?.id) {
+      setComponents(await fetchVersionComponents(ver.id));
+    } else {
+      setComponents([]);
     }
-  }, [meId, members]);
+    await loadNotesFor(ver, tid);
+  }, [loadNotesFor]);
 
-  const selectShot = useCallback(async (nextShot) => {
+  const selectShot = useCallback(async (nextShot, { preferredTaskId } = {}) => {
     setShot(nextShot);
     setError('');
     setVersion(null);
+    setVersions([]);
     setComponents([]);
     setNotes([]);
     setNoteParent(null);
@@ -371,34 +371,57 @@ export default function AeWorkspace() {
     }
 
     try {
-      let tlist = await fetchTasksForShot(nextShot.id);
+      const tlist = await fetchTasksForShot(nextShot.id);
+      setTasks(tlist);
       const preferred =
+        (preferredTaskId && tlist.find((t) => t.id === preferredTaskId)) ||
         tlist.find((t) => /comp|roto|paint|fx|vfx/i.test(t.type || t.name)) ||
         tlist[0];
       const tid = preferred?.id || '';
       setTaskId(tid);
 
-      if (preferred && tid) {
-        const updated = await ensureAssignee(preferred, tid);
-        tlist = tlist.map((t) => (t.id === tid ? updated : t));
-      }
-      setTasks(tlist);
+      const verList = tid
+        ? await fetchShotVersions(nextShot.id, tid)
+        : await fetchShotVersions(nextShot.id);
+      setVersions(verList || []);
 
-      let ver = null;
-      if (tid) ver = await fetchLatestVersionForTask(tid);
+      let ver = verList?.[0] || null;
+      if (!ver && tid) ver = await fetchLatestVersionForTask(tid);
       if (!ver) ver = await fetchLatestVersionForShot(nextShot.id);
-      setVersion(ver);
-
-      if (ver?.id) {
-        setComponents(await fetchVersionComponents(ver.id));
-      } else {
-        setComponents([]);
-      }
-      await loadNotesFor(ver, tid);
+      await loadVersionBundle(ver, tid);
     } catch (e) {
       setError(e.message || String(e));
     }
-  }, [ensureAssignee, loadNotesFor]);
+  }, [loadVersionBundle]);
+
+  selectShotRef.current = selectShot;
+
+  // Alert → open this shot/task
+  useEffect(() => {
+    if (!focusRequest?.shotId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        if (focusRequest.projectId && focusRequest.projectId !== projectId) {
+          setProjectId(focusRequest.projectId);
+          persistSharedProjectId(focusRequest.projectId);
+          lastCompName.current = '';
+        }
+        await selectShotRef.current?.(
+          {
+            id: focusRequest.shotId,
+            name: focusRequest.shotName || focusRequest.shotId,
+          },
+          { preferredTaskId: focusRequest.taskId || undefined },
+        );
+      } catch (e) {
+        if (!cancelled) setError(e.message || String(e));
+      } finally {
+        if (!cancelled) onFocusHandled?.();
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [focusRequest, projectId, onFocusHandled]);
 
   const runMatch = useCallback(async (compName) => {
     if (!projectId) {
@@ -409,24 +432,27 @@ export default function AeWorkspace() {
       setError('No active composition');
       return;
     }
+    const gen = ++matchGen.current;
     setMatching(true);
     setError('');
     try {
       const shots = await findShotsMatchingName(projectId, compName);
+      if (gen !== matchGen.current) return;
       const ranked = rankShotMatches(compName, shots);
       setMatches(ranked);
-      if (ranked[0] && ranked[0].score >= 60) {
+      if (ranked[0] && ranked[0].score >= 80) {
         await selectShot(ranked[0].shot);
       } else if (!ranked.length) {
         setShot(null);
         setError(`No shots matching "${compName}"`);
       } else {
+        // Ambiguous / low confidence — show picker, don't auto-select
         setShot(null);
       }
     } catch (e) {
-      setError(e.message || String(e));
+      if (gen === matchGen.current) setError(e.message || String(e));
     } finally {
-      setMatching(false);
+      if (gen === matchGen.current) setMatching(false);
     }
   }, [projectId, selectShot]);
 
@@ -442,23 +468,29 @@ export default function AeWorkspace() {
     setBusy('version');
     setError('');
     try {
-      let tlist = tasks;
-      const task = tlist.find((t) => t.id === id);
-      if (task) {
-        const updated = await ensureAssignee(task, id);
-        tlist = tlist.map((t) => (t.id === id ? updated : t));
-        setTasks(tlist);
-      }
-
-      let ver = id ? await fetchLatestVersionForTask(id) : null;
+      const verList = id && shot
+        ? await fetchShotVersions(shot.id, id)
+        : shot
+          ? await fetchShotVersions(shot.id)
+          : [];
+      setVersions(verList || []);
+      let ver = verList?.[0] || null;
+      if (!ver && id) ver = await fetchLatestVersionForTask(id);
       if (!ver && shot) ver = await fetchLatestVersionForShot(shot.id);
-      setVersion(ver);
-      if (ver?.id) {
-        setComponents(await fetchVersionComponents(ver.id));
-      } else {
-        setComponents([]);
-      }
-      await loadNotesFor(ver, id);
+      await loadVersionBundle(ver, id);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const onVersionChange = async (versionId) => {
+    const ver = versions.find((v) => v.id === versionId) || null;
+    setBusy('version');
+    setError('');
+    try {
+      await loadVersionBundle(ver, taskId);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -492,6 +524,34 @@ export default function AeWorkspace() {
     }
   };
 
+  const assignToMe = async () => {
+    if (!taskId || !meId) return;
+    setBusy('assign');
+    setError('');
+    try {
+      await assignUserToTask(taskId, meId);
+      const user = members.find((m) => m.id === meId);
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== taskId) return t;
+          const ids = t.assigneeIds?.includes(meId)
+            ? t.assigneeIds
+            : [...(t.assigneeIds || []), meId];
+          return {
+            ...t,
+            assigneeIds: ids,
+            assignee: memberLabel(user) || 'Me',
+          };
+        }),
+      );
+      showToast('Assigned to you');
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy('');
+    }
+  };
+
   const doImport = async (mode) => {
     if (!isAePanel()) {
       setError('Import only works inside After Effects');
@@ -499,7 +559,11 @@ export default function AeWorkspace() {
     }
     const component = pickAeImportComponent(components, mode);
     if (!component) {
-      setError(`No ${mode} component on v${version?.version ?? '?'}`);
+      setError(
+        mode === 'original'
+          ? `No original media on v${version?.version ?? '?'} (review proxy doesn't count)`
+          : `No proxy on v${version?.version ?? '?'}`,
+      );
       return;
     }
     const url = getComponentUrl(component.id);
@@ -563,7 +627,7 @@ export default function AeWorkspace() {
     setBusy('note');
     setError('');
     try {
-      await createNote(noteParent.id, noteParent.type, text);
+      await createNote(noteParent.id, noteParent.type, text, { isTodo: false });
       setNoteText('');
       setNotes(await fetchNotes(noteParent.id));
       showToast('Note posted');
@@ -576,6 +640,7 @@ export default function AeWorkspace() {
 
   const activeTask = tasks.find((t) => t.id === taskId);
   const assigneeId = activeTask?.assigneeIds?.[0] || '';
+  const amAssigned = meId && activeTask?.assigneeIds?.includes(meId);
   const thumb = version?.thumbnail_id
     ? getThumbnailUrl(version.thumbnail_id, 480)
     : shot?.thumbnail_id
@@ -591,6 +656,10 @@ export default function AeWorkspace() {
   const taskOptions = tasks.map((t) => ({
     value: t.id,
     label: `${t.type || t.name}${t.status?.name ? ` - ${t.status.name}` : ''}`,
+  }));
+  const versionOptions = versions.map((v) => ({
+    value: v.id,
+    label: `v${v.version}${v.status?.name ? ` - ${v.status.name}` : ''}${v.user?.first_name ? ` (${v.user.first_name})` : ''}`,
   }));
   const assigneeOptions = [
     { value: '', label: 'Unassigned' },
@@ -643,7 +712,7 @@ export default function AeWorkspace() {
           <div className="ae-empty">Select a project to match the active comp to an ftrack shot.</div>
         )}
 
-        {projectId && matches.length > 1 && (
+        {projectId && matches.length > 0 && (!shot || matches.length > 1) && (
           <div className="ae-section">
             <div className="ae-section-title">Matches</div>
             <div className="ae-card" style={{ padding: 6 }}>
@@ -691,6 +760,18 @@ export default function AeWorkspace() {
                   </div>
                 )}
 
+                {versions.length > 0 && (
+                  <div className="ae-field">
+                    <div className="ae-field-label">Version</div>
+                    <AeSelect
+                      value={version?.id || ''}
+                      options={versionOptions}
+                      onChange={onVersionChange}
+                      disabled={!!busy}
+                    />
+                  </div>
+                )}
+
                 {taskId && (
                   <div className="ae-field">
                     <div className="ae-field-label">Assigned to</div>
@@ -701,6 +782,17 @@ export default function AeWorkspace() {
                       onChange={onAssigneeChange}
                       disabled={busy === 'assign'}
                     />
+                    {meId && !amAssigned && (
+                      <button
+                        type="button"
+                        className="ae-btn ghost"
+                        style={{ marginTop: 6 }}
+                        disabled={busy === 'assign'}
+                        onClick={assignToMe}
+                      >
+                        Assign to me
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -724,6 +816,11 @@ export default function AeWorkspace() {
                 </div>
                 {!version && (
                   <div className="ae-error">No published version on this shot/task.</div>
+                )}
+                {version && !hasOriginal && hasProxy && (
+                  <div className="ae-meta" style={{ marginTop: 6 }}>
+                    No original media — use Import Proxy for the review MP4.
+                  </div>
                 )}
                 {version && !hasOriginal && !hasProxy && (
                   <div className="ae-error">Version has no importable components.</div>
@@ -776,6 +873,23 @@ export default function AeWorkspace() {
                           {n.category?.name ? ` · ${n.category.name}` : ''}
                         </div>
                         <div className="ae-note-body">{n.content}</div>
+                        {(n.note_components || []).map((nc, i) => {
+                          const url = nc.thumbnail_url || nc.url;
+                          if (!url) return null;
+                          return (
+                            <img
+                              key={nc.component_id || i}
+                              src={url}
+                              alt=""
+                              style={{
+                                marginTop: 6,
+                                maxWidth: '100%',
+                                borderRadius: 6,
+                                border: '1px solid var(--border)',
+                              }}
+                            />
+                          );
+                        })}
                       </div>
                     ))}
                     <div className="ae-field">

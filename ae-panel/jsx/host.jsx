@@ -1,4 +1,4 @@
-/* global app, CompItem, FolderItem, ImportOptions, ImportAsType, File */
+/* global app, CompItem, FolderItem, FootageItem, ImportOptions, ImportAsType, File */
 // ExtendScript host — called from the CEP panel via CSInterface.evalScript()
 
 function _ok(data) {
@@ -124,3 +124,77 @@ function alertMessage(msg) {
     return _err(e);
   }
 }
+
+/** Absolute fs path from a File, normalized for Windows. */
+function _filePath(file) {
+  if (!file) return null;
+  try {
+    var p = File.decode(file.fsName || file.absoluteURI || "");
+    return p || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Paths for selected FootageItems that have a file source.
+ * Skips solids, comps, missing files.
+ */
+function getSelectedFootagePaths() {
+  try {
+    var sel = app.project.selection;
+    var paths = [];
+    var seen = {};
+    for (var i = 0; i < sel.length; i++) {
+      var item = sel[i];
+      if (!(item instanceof FootageItem)) continue;
+      try {
+        var src = item.mainSource;
+        if (!src || !src.file) continue;
+        var p = _filePath(src.file);
+        if (!p || seen[p]) continue;
+        if (!(new File(p)).exists) continue;
+        seen[p] = true;
+        paths.push(p);
+      } catch (inner) {
+        // skip this item
+      }
+    }
+    return _ok({ paths: paths, count: paths.length });
+  } catch (e) {
+    return _err(e);
+  }
+}
+
+/**
+ * Multi-select OS file dialog for media. Returns { paths: [...] }.
+ * Cancel → ok with empty paths.
+ */
+function pickMediaFiles() {
+  try {
+    var files = File.openDialog(
+      "Select media to upload to ftrack",
+      "Media:*.mov;*.mp4;*.mxf;*.avi;*.mkv;*.mov,All files:*.*",
+      true
+    );
+    if (!files) {
+      return _ok({ paths: [], count: 0, cancelled: true });
+    }
+    // Single file → File; multi → Array
+    if (!(files instanceof Array)) {
+      files = [files];
+    }
+    var paths = [];
+    var seen = {};
+    for (var i = 0; i < files.length; i++) {
+      var p = _filePath(files[i]);
+      if (!p || seen[p]) continue;
+      seen[p] = true;
+      paths.push(p);
+    }
+    return _ok({ paths: paths, count: paths.length, cancelled: false });
+  } catch (e) {
+    return _err(e);
+  }
+}
+
