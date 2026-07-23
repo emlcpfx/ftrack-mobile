@@ -155,6 +155,37 @@ export function pickTaskForHint(tasks, taskHint) {
   return ranked[0]?.t || null;
 }
 
+/** All tasks that share the top score (for ambiguous picker). */
+export function rankTasksForHint(tasks, taskHint) {
+  const list = tasks || [];
+  if (!list.length) return [];
+  const hint = String(taskHint || 'comp').toLowerCase();
+  const patterns = TASK_HINT_PATTERNS[hint] || [new RegExp(hint, 'i')];
+
+  const score = (t) => {
+    const name = t.name || '';
+    const type = t.type || '';
+    let s = 0;
+    for (const re of patterns) {
+      if (re.test(type)) s = Math.max(s, 100);
+      if (re.test(name)) s = Math.max(s, 90);
+    }
+    if (hint === 'comp') {
+      if (/^comp$/i.test(name)) s = Math.max(s, 95);
+      if (/^compositing$/i.test(name) || /^compositing$/i.test(type)) s = Math.max(s, 100);
+    }
+    return s;
+  };
+
+  const ranked = list
+    .map((t) => ({ t, s: score(t) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  if (!ranked.length) return [];
+  const top = ranked[0].s;
+  return ranked.filter((x) => x.s === top).map((x) => x.t);
+}
+
 /**
  * Resolve one filename against a project (exact shot name, then task hint).
  * deps: { findShotsMatchingName, fetchTasksForShot }
@@ -190,7 +221,8 @@ export async function resolvePublishFile(projectId, filename, deps) {
   }
 
   const tasks = await deps.fetchTasksForShot(shot.id);
-  const task = pickTaskForHint(tasks, parsed.taskHint);
+  const rankedTasks = rankTasksForHint(tasks, parsed.taskHint);
+  const task = rankedTasks[0] || null;
   if (!task) {
     return {
       ok: false,
@@ -199,6 +231,19 @@ export async function resolvePublishFile(projectId, filename, deps) {
       shot,
       task: null,
       tasks,
+      taskCandidates: [],
+    };
+  }
+
+  if (rankedTasks.length > 1) {
+    return {
+      ok: false,
+      error: `Ambiguous ${parsed.taskHint} task on ${shot.name}`,
+      parsed,
+      shot,
+      task: null,
+      tasks,
+      taskCandidates: rankedTasks,
     };
   }
 
@@ -209,5 +254,6 @@ export async function resolvePublishFile(projectId, filename, deps) {
     shot,
     task,
     tasks,
+    taskCandidates: rankedTasks,
   };
 }

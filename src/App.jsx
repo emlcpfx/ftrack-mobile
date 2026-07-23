@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   createSession,
+  clearSession,
+  getSessionCreds,
   fetchReviews, fetchReviewShots, fetchReviewThumbnails, fetchTaskStatusesByShots,
   fetchProjects, fetchShots, fetchProjectTasks, fetchStatuses, fetchShotStatuses, fetchShotVersions,
   fetchTaskTypes, createTaskOnShot, fetchTasksForShot,
@@ -12,7 +14,8 @@ import {
   createNote as apiCreateNote, createReply as apiCreateReply,
   fetchNotes as apiFetchNotes, deleteNote as apiDeleteNote,
   fetchNoteCategories, fetchNoteCounts,
-  getThumbnailUrl, getComponentUrl, getPlayableComponentUrl, getProxiedComponentUrl,
+  getThumbnailUrl, getComponentUrl, getAllowedDownloadHosts,
+  getPlayableComponentUrl, getProxiedComponentUrl,
   fetchVersionComponents,
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
@@ -20,14 +23,18 @@ import {
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
   cleanAndSortReview,
 } from "./api/ftrack";
-import { isAePanel, downloadAndImport } from "./ae/bridge.js";
+import { clearAuth, loadAuth, saveAuth, redactUrl, loadLlmSettingsSecure, saveLlmSettingsSecure, clearLlmSettingsSecure } from "./api/authStorage.js";
+import { isAePanel, downloadComponentAndImport } from "./ae/bridge.js";
 import AePublish from "./ae/AePublish.jsx";
 import AeAlerts from "./ae/AeAlerts.jsx";
 import AeCompBar from "./ae/AeCompBar.jsx";
+import ShotDetailNotes from "./ae/ShotDetailNotes.jsx";
+import { AeSelect, aeSharedCss } from "./ae/ui.jsx";
 import { useAeCompMatch } from "./ae/useAeCompMatch.js";
 import { runClientGeminiChat } from "./chat/clientChat.js";
-import { resolveAeProject, persistSharedProjectId } from "./ae/projectContext.js";
+import { resolveAeProject, persistSharedProjectId, getSharedProjectId } from "./ae/projectContext.js";
 import { fetchAeAlerts } from "./ae/alerts.js";
+import { subscribeAlertRefresh } from "./api/eventHub.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
@@ -457,6 +464,7 @@ function LoginScreen({ onLogin }) {
   const [server, setServer] = useState(defaultServer);
   const [apiKey, setApiKey] = useState("");
   const [user, setUser] = useState("");
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -465,7 +473,7 @@ function LoginScreen({ onLogin }) {
     setError("");
     try {
       await createSession({ serverUrl: server, apiUser: user, apiKey });
-      onLogin({ server, user, apiKey });
+      onLogin({ server, user, apiKey, remember });
     } catch (err) {
       setError(err.message || "Connection failed");
     } finally {
@@ -504,11 +512,95 @@ function LoginScreen({ onLogin }) {
             </a>
           )}
         </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted)', cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          Remember me on this device
+        </label>
         {error && <div className="error-msg">{error}</div>}
         <button className="btn-primary" type="submit" disabled={loading || !ready}>
           {loading ? "Connecting..." : "Connect"}
         </button>
       </form>
+    </div>
+  );
+}
+
+// ─── Player AE import chips ───────────────────────────────────────────────────
+function PlayerAeImport({ versionId, shotName, showToast }) {
+  const [busy, setBusy] = useState('');
+  const [comps, setComps] = useState([]);
+
+  useEffect(() => {
+    if (!versionId) return undefined;
+    let cancelled = false;
+    fetchVersionComponents(versionId)
+      .then((rows) => { if (!cancelled) setComps(rows || []); })
+      .catch(() => { if (!cancelled) setComps([]); });
+    return () => { cancelled = true; };
+  }, [versionId]);
+
+  const hasOriginal = !!pickAeImportComponent(comps, 'original');
+  const hasProxy = !!pickAeImportComponent(comps, 'proxy');
+
+  const run = async (mode) => {
+    const component = pickAeImportComponent(comps, mode);
+    if (!component) {
+      showToast(mode === 'original' ? 'No original media' : 'No proxy');
+      return;
+    }
+    setBusy(mode);
+    try {
+      const result = await downloadComponentAndImport(component.id, {
+        name: shotName || component.name || 'ftrack',
+        fileType: component.file_type || '',
+        intoActiveComp: true,
+        allowedHosts: getAllowedDownloadHosts(),
+      });
+      if (!result.ok) throw new Error(result.error || 'Import failed');
+      showToast(result.addedLayer ? `Imported → layer` : `Imported`);
+    } catch (e) {
+      showToast(redactUrl(e.message || String(e)));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  if (!hasOriginal && !hasProxy) return null;
+
+  return (
+    <div style={{ display: 'flex', gap: 6, padding: '10px 16px 0', flexWrap: 'wrap', alignItems: 'center' }}>
+      <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)' }}>Import</span>
+      <button
+        type="button"
+        disabled={!hasOriginal || !!busy}
+        onClick={() => run('original')}
+        style={{
+          background: 'transparent', border: '1px solid var(--border)', borderRadius: 5,
+          padding: '3px 8px', color: 'var(--muted)', fontSize: 10, fontWeight: 600,
+          cursor: hasOriginal && !busy ? 'pointer' : 'default', opacity: !hasOriginal || busy ? 0.4 : 1,
+          fontFamily: 'inherit',
+        }}
+      >
+        {busy === 'original' ? '…' : 'Original'}
+      </button>
+      <button
+        type="button"
+        disabled={!hasProxy || !!busy}
+        onClick={() => run('proxy')}
+        style={{
+          background: 'transparent', border: '1px solid var(--border)', borderRadius: 5,
+          padding: '3px 8px', color: 'var(--muted)', fontSize: 10, fontWeight: 600,
+          cursor: hasProxy && !busy ? 'pointer' : 'default', opacity: !hasProxy || busy ? 0.4 : 1,
+          fontFamily: 'inherit',
+        }}
+      >
+        {busy === 'proxy' ? '…' : 'Proxy'}
+      </button>
     </div>
   );
 }
@@ -866,10 +958,20 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
       const catName = categories.find(c => c.id === catId)?.name || null;
       const localAnnotationDataUrl = annotationBlob
         ? URL.createObjectURL(annotationBlob) : null;
+      // @Name mentions → recipient notifications when we can resolve member ids
+      const mentionedIds = [];
+      for (const m of members) {
+        const label = [m.first_name, m.last_name].filter(Boolean).join(' ') || m.username;
+        if (!label) continue;
+        if (new RegExp(`@${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(noteText)) {
+          mentionedIds.push(m.id);
+        }
+      }
       await apiCreateNote(shot.versionId, 'AssetVersion', noteText.trim(), {
         frameNumber: frame,
         annotationBlob,
         categoryId: catId,
+        recipientIds: mentionedIds,
       });
       setNotes(n => [...n, {
         id: null,
@@ -1096,6 +1198,10 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
           <StatusPill status={currentStatus} onClick={(shot.taskId || shot.versionId) ? () => setStatusPicker(true) : undefined} />
         </div>
 
+        {isAePanel() && shot.versionId && (
+          <PlayerAeImport versionId={shot.versionId} shotName={shot.name} showToast={showToast} />
+        )}
+
         {/* Notes */}
         <div className="notes-section">
           <div className="notes-title">Notes ({notes.length})</div>
@@ -1263,7 +1369,7 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
 }
 
 // ─── Reviews Tab ──────────────────────────────────────────────────────────────
-function ReviewsTab({ userInitial }) {
+function ReviewsTab({ userInitial, onLogout }) {
   const [reviews, setReviews] = useState([]);
   const [reviewThumbs, setReviewThumbs] = useState({});
   const [loading, setLoading] = useState(true);
@@ -2062,22 +2168,41 @@ function ReviewsTab({ userInitial }) {
       <div className="header">
         <BrandLogo />
         <div className="header-right">
-          <div className="avatar">{userInitial}</div>
+          <div
+            className="avatar"
+            title={onLogout ? 'Sign out' : undefined}
+            onClick={onLogout || undefined}
+            style={onLogout ? { cursor: 'pointer' } : undefined}
+          >
+            {userInitial}
+          </div>
         </div>
       </div>
       {/* Project filter */}
       {projects.length > 1 && (
         <div className="project-bar">
-          <select
-            className="project-picker"
-            value={selectedProjectId}
-            onChange={e => setSelectedProjectId(e.target.value)}
-          >
-            <option value="">All Projects</option>
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          {isAePanel() ? (
+            <AeSelect
+              value={selectedProjectId || ''}
+              onChange={setSelectedProjectId}
+              placeholder="All Projects"
+              options={[
+                { value: '', label: 'All Projects' },
+                ...projects.map((p) => ({ value: p.id, label: p.name })),
+              ]}
+            />
+          ) : (
+            <select
+              className="project-picker"
+              value={selectedProjectId}
+              onChange={e => setSelectedProjectId(e.target.value)}
+            >
+              <option value="">All Projects</option>
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
         </div>
       )}
       {/* Search & sort */}
@@ -2629,20 +2754,16 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
       );
       return;
     }
-    const url = getComponentUrl(component.id);
-    if (!url) {
-      showToast('Could not resolve component URL');
-      return;
-    }
     setImportBusy(mode);
     try {
       const label = importVersionMeta?.version != null
         ? `${detailShot?.name}_v${importVersionMeta.version}`
         : (component.name || detailShot?.name || 'ftrack');
-      const result = await downloadAndImport(url, {
+      const result = await downloadComponentAndImport(component.id, {
         name: label,
         fileType: component.file_type || '',
         intoActiveComp: true,
+        allowedHosts: getAllowedDownloadHosts(),
       });
       if (!result.ok) throw new Error(result.error || 'Import failed');
       showToast(
@@ -2651,9 +2772,24 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
           : `Imported "${result.name}"`,
       );
     } catch (e) {
-      showToast(e.message || String(e));
+      const msg = e.message || String(e);
+      showToast(redactUrl(msg));
     } finally {
       setImportBusy('');
+    }
+  };
+
+  const selectImportVersion = async (versionId) => {
+    const ver = versions.find((v) => v.id === versionId);
+    if (!ver) return;
+    setImportVersionMeta(ver);
+    setImportComponents([]);
+    try {
+      const comps = await fetchVersionComponents(ver.id);
+      setImportComponents(comps || []);
+    } catch {
+      setImportComponents([]);
+      showToast('Failed to load version components');
     }
   };
 
@@ -3424,23 +3560,21 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
             </div>
             {inAe && (
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', width: '100%' }}>
-                <select
-                  value={t.assigneeIds?.[0] || ''}
-                  disabled={assignBusy === t.id}
-                  onChange={(e) => onTaskAssigneeChange(t.id, e.target.value)}
-                  style={{
-                    flex: 1, background: 'var(--card2)', border: '1px solid var(--border)',
-                    borderRadius: 6, padding: '6px 8px', color: 'var(--text)', fontSize: 11,
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  <option value="">Unassigned</option>
-                  {members.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {memberLabel(m)}{m.id === meId ? ' (me)' : ''}
-                    </option>
-                  ))}
-                </select>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <AeSelect
+                    value={t.assigneeIds?.[0] || ''}
+                    disabled={assignBusy === t.id}
+                    placeholder="Unassigned"
+                    onChange={(v) => onTaskAssigneeChange(t.id, v)}
+                    options={[
+                      { value: '', label: 'Unassigned' },
+                      ...members.map((m) => ({
+                        value: m.id,
+                        label: `${memberLabel(m)}${m.id === meId ? ' (me)' : ''}`,
+                      })),
+                    ]}
+                  />
+                </div>
                 {meId && !t.assigneeIds?.includes(meId) && (
                   <button
                     type="button"
@@ -3455,6 +3589,20 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
                     Me
                   </button>
                 )}
+              </div>
+            )}
+            {Object.keys(customAttrValues[t.id] || {}).length > 0 && (
+              <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+                {Object.entries(customAttrValues[t.id]).slice(0, 6).map(([key, val]) => {
+                  const cfg = customAttrConfigs.find((c) => c.key === key);
+                  if (val == null || val === '') return null;
+                  return (
+                    <div key={key}>
+                      <span style={{ opacity: 0.7 }}>{cfg?.label || key}: </span>
+                      {String(val)}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -3472,8 +3620,21 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
             }}
           >
             <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', letterSpacing: 0.3 }}>
-              Import{importVersionMeta ? ` v${importVersionMeta.version}` : ''}
+              Import
             </span>
+            {versions.length > 0 && (
+              <div style={{ minWidth: 88, maxWidth: 120 }}>
+                <AeSelect
+                  value={importVersionMeta?.id || ''}
+                  placeholder="Version"
+                  onChange={selectImportVersion}
+                  options={versions.map((v) => ({
+                    value: v.id,
+                    label: `v${v.version}`,
+                  }))}
+                />
+              </div>
+            )}
             <button
               type="button"
               disabled={!hasOriginal || !!importBusy}
@@ -3521,6 +3682,14 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
           </div>
         )}
 
+        {inAe && (
+          <ShotDetailNotes
+            parentId={importVersionMeta?.id || ''}
+            parentType="AssetVersion"
+            label={importVersionMeta ? `v${importVersionMeta.version}` : ''}
+          />
+        )}
+
         <div className="section-label">Versions ({versions.length})</div>
         {versionsLoading && <div className="loading">Loading versions...</div>}
         {!versionsLoading && versions.length === 0 && (
@@ -3564,27 +3733,38 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0, marginRight: 8 }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', flexShrink: 0 }}>Project:</span>
               {projects.length > 0 ? (
-                <select
-                  value={selectedProjectId || ''}
-                  onChange={(e) => setSelectedProjectId(e.target.value)}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    background: 'var(--bg)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 6,
-                    padding: '5px 8px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: 'var(--text)',
-                    fontFamily: 'inherit',
-                    outline: 'none',
-                  }}
-                >
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}</option>
-                  ))}
-                </select>
+                inAe ? (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <AeSelect
+                      value={selectedProjectId || ''}
+                      onChange={setSelectedProjectId}
+                      placeholder="Project…"
+                      options={projects.map((p) => ({ value: p.id, label: p.name }))}
+                    />
+                  </div>
+                ) : (
+                  <select
+                    value={selectedProjectId || ''}
+                    onChange={(e) => setSelectedProjectId(e.target.value)}
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      background: 'var(--bg)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 6,
+                      padding: '5px 8px',
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: 'var(--text)',
+                      fontFamily: 'inherit',
+                      outline: 'none',
+                    }}
+                  >
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                )
               ) : (
                 <BrandLogo />
               )}
@@ -3703,21 +3883,15 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
 // ─── Chat Tab ────────────────────────────────────────────────────────────────
 
 function getLlmSettings() {
-  try {
-    const raw = localStorage.getItem('llm_settings');
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  return loadLlmSettingsSecure();
 }
 
-function saveLlmSettings(settings) {
-  localStorage.setItem('llm_settings', JSON.stringify(settings));
+function saveLlmSettings(settings, opts) {
+  saveLlmSettingsSecure(settings, opts);
 }
 
 function getFtrackCreds() {
-  try {
-    const raw = localStorage.getItem('ftrack_auth');
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+  return loadAuth();
 }
 
 function getChatHistory() {
@@ -3745,6 +3919,7 @@ function ChatTab() {
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsRemember, setSettingsRemember] = useState(true);
   const [llmSettings, setLlmSettings] = useState(getLlmSettings);
   const [settingsProvider, setSettingsProvider] = useState(llmSettings?.provider || 'gemini');
   const [settingsKey, setSettingsKey] = useState(llmSettings?.apiKey || '');
@@ -3759,13 +3934,34 @@ function ChatTab() {
   const hasSettings = llmSettings?.provider && llmSettings?.apiKey;
   const selectedProject = projects.find(p => p.id === selectedProjectId);
 
-  // Load projects
+  // Load projects — prefer shared AE/Shots project
   useEffect(() => {
-    fetchProjects().then(projs => {
+    fetchProjects().then(async (projs) => {
       setProjects(projs);
-      if (projs.length > 0) setSelectedProjectId(projs[0].id);
+      if (!projs.length) return;
+      const shared = getSharedProjectId();
+      const sharedHit = shared && projs.find((p) => p.id === shared);
+      if (sharedHit) {
+        setSelectedProjectId(sharedHit.id);
+        return;
+      }
+      if (isAePanel()) {
+        try {
+          const { project } = await resolveAeProject(projs);
+          if (project) {
+            setSelectedProjectId(project.id);
+            persistSharedProjectId(project.id);
+            return;
+          }
+        } catch { /* ignore */ }
+      }
+      setSelectedProjectId(projs[0].id);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (selectedProjectId) persistSharedProjectId(selectedProjectId);
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -3802,7 +3998,7 @@ function ChatTab() {
   const handleSaveSettings = () => {
     if (!settingsKey.trim()) return;
     const settings = { provider: settingsProvider, apiKey: settingsKey.trim() };
-    saveLlmSettings(settings);
+    saveLlmSettings(settings, { remember: settingsRemember });
     setLlmSettings(settings);
     // Save custom prompt
     const prompt = settingsPrompt.trim();
@@ -3849,10 +4045,15 @@ function ChatTab() {
           customPrompt: customPrompt || undefined,
         });
       } else {
+        // Claude needs /api/chat. Prefer Gemini in AE panel (fully client-side).
+        if (isAePanel()) {
+          throw new Error('Claude chat needs the web backend. Use Gemini in the AE panel.');
+        }
         const chatBase = (import.meta.env.VITE_CHAT_API_URL || '').replace(/\/+$/, '');
         const chatUrl = `${chatBase}/api/chat`;
         let resp;
         try {
+          const live = getSessionCreds();
           resp = await fetch(chatUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -3860,9 +4061,10 @@ function ChatTab() {
               messages: conversationRef.current,
               provider: llmSettings.provider,
               llmApiKey: llmSettings.apiKey,
-              ftrackServer: ftrackCreds.server,
-              ftrackUser: ftrackCreds.user,
-              ftrackApiKey: ftrackCreds.apiKey,
+              // Used only if server has no FTRACK_* env
+              ftrackServer: live?.serverUrl || ftrackCreds.server,
+              ftrackUser: live?.apiUser || ftrackCreds.user,
+              ftrackApiKey: live?.apiKey || ftrackCreds.apiKey,
               projectId: selectedProjectId || null,
               projectName: selectedProject?.name || null,
               customPrompt: customPrompt || undefined,
@@ -3871,8 +4073,7 @@ function ChatTab() {
         } catch (netErr) {
           throw new Error(
             `Chat API unreachable (${chatUrl || '/api/chat'}). `
-            + 'Claude needs the Vercel /api/chat backend — use Gemini in the panel, '
-            + 'or set VITE_CHAT_API_URL to your deployed app.',
+            + 'Use Gemini in the panel, or set VITE_CHAT_API_URL to your deployed app.',
           );
         }
 
@@ -3958,6 +4159,15 @@ function ChatTab() {
             Extra instructions appended to the AI's system prompt.
           </div>
         </div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--muted)', cursor: 'pointer', marginBottom: 16 }}>
+          <input
+            type="checkbox"
+            checked={settingsRemember}
+            onChange={(e) => setSettingsRemember(e.target.checked)}
+            style={{ accentColor: 'var(--accent)' }}
+          />
+          Remember API key on this device
+        </label>
         <button className="btn-primary" onClick={handleSaveSettings} disabled={!settingsKey.trim()}
           style={{ width: '100%' }}>
           Save & Connect
@@ -3970,7 +4180,7 @@ function ChatTab() {
         {llmSettings?.apiKey && (
           <button className="modal-cancel" style={{ marginTop: 12, width: '100%' }}
             onClick={() => {
-              localStorage.removeItem('llm_settings');
+              clearLlmSettingsSecure();
               localStorage.removeItem('chat_history');
               localStorage.removeItem('chat_conversation');
               localStorage.removeItem('chat_custom_prompt');
@@ -4007,15 +4217,34 @@ function ChatTab() {
       {/* Project selector */}
       {projects.length > 0 && (
         <div className="project-bar">
-          <select
-            className="project-picker"
-            value={selectedProjectId || ''}
-            onChange={e => { setSelectedProjectId(e.target.value); conversationRef.current = []; setMessages(prev => [...prev, { type: 'system', text: `Switched to project: ${projects.find(p => p.id === e.target.value)?.name}` }]); }}
-          >
-            {projects.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          {isAePanel() ? (
+            <AeSelect
+              value={selectedProjectId || ''}
+              onChange={(v) => {
+                setSelectedProjectId(v);
+                conversationRef.current = [];
+                setMessages((prev) => [
+                  ...prev,
+                  {
+                    type: 'system',
+                    text: `Switched to project: ${projects.find((p) => p.id === v)?.name}`,
+                  },
+                ]);
+              }}
+              placeholder="Project…"
+              options={projects.map((p) => ({ value: p.id, label: p.name }))}
+            />
+          ) : (
+            <select
+              className="project-picker"
+              value={selectedProjectId || ''}
+              onChange={e => { setSelectedProjectId(e.target.value); conversationRef.current = []; setMessages(prev => [...prev, { type: 'system', text: `Switched to project: ${projects.find(p => p.id === e.target.value)?.name}` }]); }}
+            >
+              {projects.map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
         </div>
       )}
       <div className="chat-messages" ref={scrollRef}>
@@ -4119,8 +4348,11 @@ function NotificationSettings({ onClose }) {
         applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
       });
 
-      // Send subscription to server
-      const auth = JSON.parse(localStorage.getItem('ftrack_auth') || '{}');
+      // Prefer in-memory session; fall back to persisted auth
+      const live = getSessionCreds();
+      const auth = live
+        ? { server: live.serverUrl, user: live.apiUser, apiKey: live.apiKey }
+        : (loadAuth() || {});
       const resp = await fetch('/api/subscribe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4134,7 +4366,8 @@ function NotificationSettings({ onClose }) {
         }),
       });
 
-      if (!resp.ok) throw new Error('Server error');
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || 'Server error');
       setSubscribed(true);
       localStorage.setItem('ftrack_watch_statuses', JSON.stringify(watchStatuses));
       showToast('Notifications enabled!');
@@ -4332,50 +4565,60 @@ export default function App() {
   useEffect(() => {
     if (!inAe || !auth) {
       setAlertCount(0);
-      return;
+      return undefined;
     }
     let cancelled = false;
+    const projectId = getSharedProjectId() || undefined;
     const tick = async () => {
       try {
-        const { count } = await fetchAeAlerts({});
+        const { count } = await fetchAeAlerts({ projectId });
         if (!cancelled) setAlertCount(count);
       } catch {
         if (!cancelled) setAlertCount(0);
       }
     };
     tick();
-    const id = setInterval(tick, 45000);
-    return () => { cancelled = true; clearInterval(id); };
+    const id = setInterval(tick, 120000); // slow fallback; EventHub drives faster refreshes
+    const unsub = subscribeAlertRefresh(tick, { debounceMs: 1000 });
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      unsub();
+    };
   }, [inAe, auth]);
 
   // Restore saved session on mount
   useEffect(() => {
     try {
-      const saved = localStorage.getItem('ftrack_auth');
+      const saved = loadAuth();
       if (saved) {
-        const { server, user, apiKey } = JSON.parse(saved);
-        if (server && user && apiKey) {
-          createSession({ serverUrl: server, apiUser: user, apiKey })
-            .then(() => setAuth({ server, user }))
-            .catch(() => localStorage.removeItem('ftrack_auth'))
-            .finally(() => setRestoring(false));
-          return;
-        }
+        const { server, user, apiKey } = saved;
+        createSession({ serverUrl: server, apiUser: user, apiKey })
+          .then(() => setAuth({ server, user }))
+          .catch(() => clearAuth())
+          .finally(() => setRestoring(false));
+        return;
       }
     } catch {}
     setRestoring(false);
   }, []);
 
   const handleLogin = (authData) => {
-    setAuth(authData);
-    // Save credentials for session persistence
+    // Persist key via authStorage; keep React state key-free
     if (authData.apiKey) {
-      localStorage.setItem('ftrack_auth', JSON.stringify({
-        server: authData.server,
-        user: authData.user,
-        apiKey: authData.apiKey,
-      }));
+      saveAuth(
+        { server: authData.server, user: authData.user, apiKey: authData.apiKey },
+        { remember: authData.remember !== false },
+      );
     }
+    setAuth({ server: authData.server, user: authData.user });
+  };
+
+  const handleLogout = () => {
+    clearSession();
+    clearAuth();
+    setAuth(null);
+    setTab(isAePanel() ? 'shots' : 'reviews');
   };
 
   const userInitial = auth?.user?.[0]?.toUpperCase() || "?";
@@ -4383,6 +4626,7 @@ export default function App() {
   if (restoring) return (
     <>
       <style>{css}</style>
+      {isAePanel() && <style>{aeSharedCss}</style>}
       <div className="app"><div className="loading" style={{ flex: 1 }}>Connecting...</div></div>
     </>
   );
@@ -4390,6 +4634,7 @@ export default function App() {
   if (!auth) return (
     <>
       <style>{css}</style>
+      {isAePanel() && <style>{aeSharedCss}</style>}
       <div className="app"><LoginScreen onLogin={handleLogin} /></div>
     </>
   );
@@ -4397,12 +4642,14 @@ export default function App() {
   return (
     <>
       <style>{css}</style>
+      {isAePanel() && <style>{aeSharedCss}</style>}
       <div className="app">
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", position: "relative", minHeight: 0 }}>
           {showNotifSettings ? (
             inAe ? (
               <AeAlerts
                 onClose={() => setShowNotifSettings(false)}
+                projectId={getSharedProjectId() || undefined}
                 onCountChange={setAlertCount}
                 onOpenAlert={(focus) => {
                   setShotsFocus({ ...focus, _ts: Date.now() });
@@ -4416,7 +4663,7 @@ export default function App() {
           ) : (
             <>
               {tab === "publish" && inAe && <AePublish />}
-              {tab === "reviews" && <ReviewsTab userInitial={userInitial} />}
+              {tab === "reviews" && <ReviewsTab userInitial={userInitial} onLogout={handleLogout} />}
               {tab === "shots" && (
                 <ShotsTab
                   focusRequest={shotsFocus}

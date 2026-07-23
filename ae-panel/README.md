@@ -17,15 +17,13 @@ That script: `git pull` → `npm install` → enable CEP debug → link extensio
 
 Then reopen **Window → Extensions (Legacy) → ftrack panel** (or restart AE).
 
-Requires: Git, Node.js/npm, and a clone of this repo.
+Requires: Git, Node.js/npm, and a clone of this repo. **AE 2022+** (CEP 11).
 
-## Features (AE tab)
+## Features
 
-1. **Match** — active comp name → ftrack shot (auto on comp change)
-2. **Import** — download original or review proxy into the active comp (`ftrack` folder)
-3. **Status** — set task status without leaving AE
-4. **Notes** — read/post notes on the latest version
-5. **Alerts** — API-polled badge for assigned Fix / Changes Needed tasks (no Web Push)
+1. **Shots** — match active comp → ftrack shot; import original/proxy by version; status; notes; assignees
+2. **Publish** — drop / select renders → match → SDK upload + encode
+3. **Reviews / Alerts / Chat** — same app surfaces as mobile
 
 ## One-time setup (Windows)
 
@@ -52,13 +50,16 @@ npm run build:cep
 
 | Path | Role |
 |---|---|
-| `ae-panel/CSXS/manifest.xml` | CEP registration |
+| `ae-panel/CSXS/manifest.xml` | CEP registration (AE 22.0+, CSXS 11) |
 | `ae-panel/jsx/host.jsx` | ExtendScript (import footage) |
-| `src/ae/AeWorkspace.jsx` | AE tab UI |
-| `src/ae/bridge.js` | CEP ↔ ExtendScript |
-| `src/ae/download.js` | Node download (bypasses CORS) |
+| `src/ae/*` | CEP bridge, publish, alerts, match |
+| `src/api/ftrack.js` | ftrack SDK session + queries |
+| `src/api/diskUpload.js` | CEP disk streaming upload (no full RAM buffer) |
 | `scripts/update-ae-panel.ps1` | Partner pull + deploy |
 
-## CORS / auth
+## Auth / downloads
 
-Component URLs from `getComponentUrl` already include `username` + `apiKey`. Downloads use CEP Node `https`, so browser CORS does not apply.
+- Panel login stores creds in the browser — that’s enough for Shots / Publish / Import / Alerts.
+- Optional Vercel env `FTRACK_SERVER` / `FTRACK_API_USER` / `FTRACK_API_KEY`: used by push cron + Claude chat when set; otherwise those features fall back to the logged-in user’s key.
+- CEP imports: signed URL or header-auth — no apiKey in the download query string.
+- Temp downloads under `%TEMP%/ftrack-ae`, purged after import.

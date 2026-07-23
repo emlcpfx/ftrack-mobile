@@ -3,11 +3,8 @@
  * Only active when running inside Adobe CEP (window.__adobe_cep__).
  */
 
-import { downloadToTemp, safeDownloadName } from './download.js';
-import {
-  getUploaderScriptPath,
-  getPythonCmd,
-} from './uploaderConfig.js';
+import { downloadToTemp, safeDownloadName, assertSafeLocalPath, purgeAeTemp } from './download.js';
+import { getAeComponentDownload, getAllowedDownloadHosts } from '../api/ftrack.js';
 
 export function isAePanel() {
   return typeof window !== 'undefined' && !!window.__adobe_cep__;
@@ -111,7 +108,43 @@ export function importFootage(filePath, { intoActiveComp = true, folderName = 'f
 }
 
 /**
+ * Download an ftrack component (signed URL or header-auth) then import into AE.
+ * Never uses apiKey-in-query URLs.
+ */
+export async function downloadComponentAndImport(componentId, opts = {}) {
+  if (!isAePanel()) throw new Error('Not in After Effects panel');
+  if (!componentId) throw new Error('No component id');
+
+  try { purgeAeTemp({ maxAgeMs: 60 * 60 * 1000 }); } catch { /* ignore */ }
+
+  const plan = await getAeComponentDownload(componentId);
+  const filename = safeDownloadName(
+    opts.name || 'ftrack_media',
+    opts.fileType || '',
+  );
+  const path = await downloadToTemp(plan.url, filename, {
+    allowedHosts: opts.allowedHosts || getAllowedDownloadHosts(),
+    headers: plan.headers || null,
+  });
+  try {
+    const result = await importFootage(path, {
+      intoActiveComp: opts.intoActiveComp !== false,
+      folderName: opts.folderName || 'ftrack',
+    });
+    return { ...result, path, downloadMode: plan.mode };
+  } finally {
+    if (!opts.keepTemp) {
+      try {
+        const fs = nodeRequire('fs');
+        if (fs.existsSync(path)) fs.unlinkSync(path);
+      } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
  * Download an ftrack component URL to temp, then import into AE.
+ * Prefer downloadComponentAndImport — this path rejects credentialed query URLs.
  */
 export async function downloadAndImport(url, opts = {}) {
   if (!isAePanel()) throw new Error('Not in After Effects panel');
@@ -121,78 +154,38 @@ export async function downloadAndImport(url, opts = {}) {
     opts.name || 'ftrack_media',
     opts.fileType || '',
   );
-  const path = await downloadToTemp(url, filename);
-  const result = await importFootage(path, {
-    intoActiveComp: opts.intoActiveComp !== false,
-    folderName: opts.folderName || 'ftrack',
+  const path = await downloadToTemp(url, filename, {
+    allowedHosts: opts.allowedHosts || [],
+    headers: opts.headers || null,
   });
-  return { ...result, path };
-}
-
-/**
- * Launch the CPFX ftrack_uploader.py with the given absolute file paths.
- * Fire-and-forget (detached) — the Tk GUI owns the rest.
- */
-export function launchFtrackUploader(filePaths, opts = {}) {
-  if (!isAePanel()) {
-    return Promise.reject(new Error('Not in After Effects panel'));
-  }
-  const paths = (filePaths || []).filter(Boolean);
-  if (!paths.length) {
-    return Promise.reject(new Error('No files to upload'));
-  }
-
-  const scriptPath = opts.scriptPath || getUploaderScriptPath();
-  const pythonCmd = opts.pythonCmd || getPythonCmd();
-
-  const fs = nodeRequire('fs');
-  const { spawn } = nodeRequire('child_process');
-
-  if (!scriptPath || !fs.existsSync(scriptPath)) {
-    return Promise.reject(
-      new Error(`Uploader script not found:\n${scriptPath}`),
-    );
-  }
-
-  for (const p of paths) {
-    if (!fs.existsSync(p)) {
-      return Promise.reject(new Error(`File not found: ${p}`));
+  try {
+    const result = await importFootage(path, {
+      intoActiveComp: opts.intoActiveComp !== false,
+      folderName: opts.folderName || 'ftrack',
+    });
+    return { ...result, path };
+  } finally {
+    if (!opts.keepTemp) {
+      try {
+        const fs = nodeRequire('fs');
+        if (fs.existsSync(path)) fs.unlinkSync(path);
+      } catch {
+        /* temp cleanup best-effort */
+      }
     }
   }
-
-  try {
-    const child = spawn(pythonCmd, [scriptPath, ...paths], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
-    });
-    child.unref();
-    return Promise.resolve({
-      ok: true,
-      count: paths.length,
-      scriptPath,
-      pythonCmd,
-    });
-  } catch (e) {
-    return Promise.reject(
-      new Error(
-        `Failed to launch Python (${pythonCmd}): ${e.message || e}. ` +
-          'Set the Python command in Publish settings if needed.',
-      ),
-    );
-  }
 }
 
-/** Read a local path into a browser File stub (keeps disk path — no full RAM read). */
+/** Read a local path into a browser File stub (keeps disk path — bytes loaded at publish time). */
 export async function fileFromPath(filePath) {
   const fs = nodeRequire('fs');
   const path = nodeRequire('path');
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`File not found: ${filePath}`);
+  const resolved = assertSafeLocalPath(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error(`File not found: ${resolved}`);
   }
-  const stat = fs.statSync(filePath);
-  const name = path.basename(filePath);
-  // Empty blob + real size/path — upload goes through Python encode_media, not XHR
+  const stat = fs.statSync(resolved);
+  const name = path.basename(resolved);
   const file = new File([new Uint8Array(0)], name, {
     type: 'application/octet-stream',
     lastModified: stat.mtimeMs || Date.now(),
@@ -202,8 +195,8 @@ export async function fileFromPath(filePath) {
   } catch {
     /* some environments seal size */
   }
-  file._aePath = filePath;
-  file.path = filePath;
+  file._aePath = resolved;
+  file.path = resolved;
   file._aeSize = stat.size;
   return file;
 }

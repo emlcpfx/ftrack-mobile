@@ -7,6 +7,7 @@ import {
   setAeAlertStatusNames,
   DEFAULT_AE_ALERT_STATUSES,
 } from './alerts.js';
+import { subscribeAlertRefresh } from '../api/eventHub.js';
 
 const normalizeColor = (c) => {
   if (!c) return '#6b7280';
@@ -102,8 +103,12 @@ export default function AeAlerts({ onClose, projectId, onCountChange, onOpenAler
   useEffect(() => {
     setLoading(true);
     refresh();
-    const id = setInterval(refresh, 30000);
-    return () => clearInterval(id);
+    const id = setInterval(refresh, 120000);
+    const unsub = subscribeAlertRefresh(refresh, { debounceMs: 800 });
+    return () => {
+      clearInterval(id);
+      unsub();
+    };
   }, [refresh]);
 
   const onDismiss = (task, e) => {

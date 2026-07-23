@@ -2,17 +2,33 @@ import { Session } from '@ftrack/api';
 
 let _session = null;
 let _userId = null;
-let _creds = null; // { serverUrl, apiUser, apiKey } for CEP Python upload
+let _creds = null; // { serverUrl, apiUser, apiKey } in-memory only
 
 export async function createSession({ serverUrl, apiUser, apiKey }) {
   const url = serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`;
-  _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: false });
+  _session = new Session(url, apiUser, apiKey, { autoConnectEventHub: true });
   await _session.initializing;
   _creds = { serverUrl: url, apiUser, apiKey };
+  // Best-effort EventHub connect (alerts); ignore failures — pollers remain
+  try {
+    if (_session.eventHub && typeof _session.eventHub.connect === 'function') {
+      await _session.eventHub.connect();
+    }
+  } catch (err) {
+    console.warn('[ftrack] EventHub connect skipped:', err?.message || err);
+  }
   // Resolve and cache the current user's ID for note authorship etc.
-  const me = await _session.query(`select id from User where username is "${apiUser}"`);
+  const me = await _session.query(
+    `select id from User where username is "${escapeFql(apiUser)}"`,
+  );
   _userId = me.data[0]?.id || null;
   return _session;
+}
+
+export function clearSession() {
+  _session = null;
+  _userId = null;
+  _creds = null;
 }
 
 export function getCurrentUserId() {
@@ -30,7 +46,7 @@ export function getSession() {
 
 /**
  * Publish a File/Blob (or CEP disk path) to a task as a new AssetVersion.
- * In AE panel, path-based uploads use Python encode_media (same as right-click uploader).
+ * CEP disk paths are read via Node fs then uploaded with SDK createComponent.
  */
 export async function publishFileToTask({
   taskId,
@@ -138,28 +154,29 @@ export async function publishFileToTask({
     if (!versionId) throw new Error('Failed to create AssetVersion');
 
     let componentId = null;
-    let viaPython = false;
+    let encodeJobId = null;
     try {
-      // CEP + disk path → Python encode_media (streams; matches right-click uploader speed)
-      const usePython = !!(diskPath && _creds && typeof window !== 'undefined' && window.__adobe_cep__);
-      if (usePython) {
-        viaPython = true;
-        report(5, 'upload', 'Streaming via Python…');
-        const { encodeMediaViaPython } = await import('../ae/pythonEncode.js');
-        const result = await encodeMediaViaPython({
-          server: _creds.serverUrl,
-          user: _creds.apiUser,
-          apiKey: _creds.apiKey,
+      const canStreamDisk = !!(
+        diskPath
+        && typeof window !== 'undefined'
+        && window.require
+        && window.__adobe_cep__
+      );
+
+      if (canStreamDisk) {
+        report(0, 'upload', 'Streaming from disk…');
+        const { uploadComponentFromDisk } = await import('./diskUpload.js');
+        const uploaded = await uploadComponentFromDisk(s, {
           versionId,
           filePath: diskPath,
           componentName: baseName,
-          onProgress: ({ percent, phase, msg }) => report(percent, phase, msg),
+          onProgress: (pct) => report(pct, 'upload'),
         });
-        componentId = result.componentId || null;
-        report(100, 'encode');
+        componentId = uploaded.componentId;
+        report(100, 'upload');
       } else {
         let uploadFile = file;
-        // Stub from path (size override, empty bytes) — load from disk for XHR fallback
+        // Stub from path — load from disk for browser/XHR createComponent
         if (diskPath && typeof window !== 'undefined' && window.require) {
           const needsBytes = !uploadFile || uploadFile.size === 0 || uploadFile._aePath;
           if (needsBytes) {
@@ -186,20 +203,34 @@ export async function publishFileToTask({
           throw new Error('createComponent returned no component id');
         }
         report(100, 'upload');
+      }
 
-        try {
-          report(100, 'encode');
-          await s.call([
-            {
-              action: 'encode_media',
-              component_id: componentId,
-              version_id: versionId,
-              keep_original: true,
-            },
-          ]);
-        } catch (err) {
-          console.warn('[publish] encode_media skipped:', err);
+      try {
+        report(0, 'encode', 'Queuing encode…');
+        const encodeResults = await s.call([
+          {
+            action: 'encode_media',
+            component_id: componentId,
+            version_id: versionId,
+            keep_original: true,
+          },
+        ]);
+        const { jobIdFromCallResult, waitForJob } = await import('./jobs.js');
+        encodeJobId = jobIdFromCallResult(encodeResults);
+        if (encodeJobId) {
+          report(10, 'encode', 'Transcoding…');
+          const waited = await waitForJob(encodeJobId, {
+            timeoutMs: 8 * 60 * 1000,
+            intervalMs: 2500,
+            onTick: () => report(50, 'encode', 'Transcoding…'),
+          });
+          if (waited.timedOut) {
+            console.warn('[publish] encode job still running; continuing');
+          }
         }
+        report(100, 'encode');
+      } catch (err) {
+        console.warn('[publish] encode_media skipped:', err);
       }
     } catch (uploadErr) {
       // Best-effort cleanup so we don't leave empty versions
@@ -233,7 +264,7 @@ export async function publishFileToTask({
       assetName: baseName,
       statusApplied,
       statusWarning,
-      viaPython,
+      encodeJobId,
     };
   } catch (err) {
     // Re-throw with filename context when possible
@@ -855,7 +886,13 @@ export async function updateTaskStatus(taskId, statusId) {
   return getSession().update('Task', [taskId], { status_id: statusId });
 }
 
-export async function createNote(parentId, parentType, text, { frameNumber, annotationBlob, categoryId, isTodo = true } = {}) {
+export async function createNote(parentId, parentType, text, {
+  frameNumber,
+  annotationBlob,
+  categoryId,
+  isTodo = true,
+  recipientIds = [],
+} = {}) {
   const s = getSession();
   const noteData = {
     content: text,
@@ -868,6 +905,22 @@ export async function createNote(parentId, parentType, text, { frameNumber, anno
   if (categoryId) noteData.category_id = categoryId;
   const result = await s.create('Note', noteData);
   const noteId = result?.data?.id;
+
+  // Recipients → ftrack inbox notifications
+  const recipients = [...new Set((recipientIds || []).filter(Boolean))];
+  if (noteId && recipients.length) {
+    for (const resourceId of recipients) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await s.create('Recipient', {
+          note_id: noteId,
+          resource_id: resourceId,
+        });
+      } catch (err) {
+        console.warn('[note] recipient failed:', resourceId, err?.message || err);
+      }
+    }
+  }
 
   // If there's an annotation image, upload it and attach to the note
   if (annotationBlob && noteId) {
@@ -906,7 +959,7 @@ export async function fetchNotes(parentId) {
             note_components.url,
             note_components.thumbnail_url
      from Note
-     where parent_id is "${parentId}"
+     where parent_id is "${escapeFql(parentId)}"
      order by date ascending`
   );
   return result.data;
@@ -999,7 +1052,7 @@ export async function fetchTasksByStatus(projectId, statusName) {
     `select id, name, parent.name, parent.id, type.name,
             status.id, status.name, status.color
      from Task
-     where project.id is "${projectId}" and status.name is "${statusName}"
+     where project.id is "${projectId}" and status.name is "${escapeFql(statusName)}"
      limit 200`
   );
   return result.data;
@@ -1234,9 +1287,83 @@ export function getComponentUrl(componentId) {
 }
 
 /**
+ * Prefer a short-lived signed download URL when the server supports it.
+ * For CEP: never return a URL that embeds apiKey — use header-auth fallback instead.
+ * @param {string} componentId
+ * @param {{ requireSigned?: boolean, preferHeaderAuth?: boolean }} [opts]
+ * @returns {Promise<string|null>}
+ */
+export async function getDownloadableComponentUrl(componentId, { requireSigned = false } = {}) {
+  if (!componentId) return null;
+  try {
+    const results = await getSession().call([
+      {
+        action: 'generate_signed_url',
+        component_id: componentId,
+        operation: 'get',
+      },
+    ]);
+    const row = Array.isArray(results) ? results[0] : results;
+    const url =
+      row?.data?.url ||
+      row?.data?.signed_url ||
+      row?.url ||
+      row?.signed_url ||
+      null;
+    if (url) return url;
+  } catch (err) {
+    console.warn('[ftrack] generate_signed_url unavailable:', err?.message || err);
+  }
+  if (requireSigned) {
+    throw new Error('Signed download URL unavailable for this component');
+  }
+  return getComponentUrl(componentId);
+}
+
+/**
+ * CEP-safe download plan: signed URL, else header-authenticated component/get (no key in query).
+ * @returns {Promise<{ url: string, headers?: Record<string,string>, mode: 'signed'|'headers' }>}
+ */
+export async function getAeComponentDownload(componentId) {
+  if (!componentId) throw new Error('No component id');
+  const creds = getSessionCreds();
+  if (!creds?.serverUrl || !creds.apiUser || !creds.apiKey) {
+    throw new Error('Not logged in');
+  }
+
+  try {
+    const signed = await getDownloadableComponentUrl(componentId, { requireSigned: true });
+    if (signed) return { url: signed, mode: 'signed' };
+  } catch {
+    /* fall through to header auth */
+  }
+
+  const base = String(creds.serverUrl).replace(/\/+$/, '');
+  return {
+    url: `${base}/component/get?id=${encodeURIComponent(componentId)}`,
+    headers: {
+      'ftrack-user': creds.apiUser,
+      'ftrack-api-key': creds.apiKey,
+    },
+    mode: 'headers',
+  };
+}
+
+/** Hostname allowlist for CEP downloads (session server only). */
+export function getAllowedDownloadHosts() {
+  const creds = getSessionCreds();
+  if (!creds?.serverUrl) return [];
+  try {
+    return [new URL(creds.serverUrl).hostname.toLowerCase()];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * URL suitable for <video src>.
  * - Web (Vercel): same-origin /api/proxy to avoid CORS
- * - CEP / file / localhost: direct ftrack URL (includes apiKey query params)
+ * - CEP / file / localhost: direct ftrack URL (may include apiKey query params)
  */
 export function getPlayableComponentUrl(componentId) {
   const directUrl = getComponentUrl(componentId);

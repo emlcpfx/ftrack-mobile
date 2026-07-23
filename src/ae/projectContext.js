@@ -20,14 +20,30 @@ export async function getAeNameHints() {
   return { projectName, compName, showCode };
 }
 
-/** Persist so AE / Shots / Reviews stay on the same project. */
+/** Persist so AE / Shots / Reviews / Chat stay on the same project. */
 export function persistSharedProjectId(id) {
   if (!id) return;
   try {
     sessionStorage.setItem('ftrack_ae_project', id);
     sessionStorage.setItem('ftrack_shots_project', id);
     sessionStorage.setItem('ftrack_reviews_project', id);
+    sessionStorage.setItem('ftrack_chat_project', id);
   } catch { /* ignore */ }
+}
+
+/** Read shared project id (any surface). */
+export function getSharedProjectId() {
+  try {
+    return (
+      sessionStorage.getItem('ftrack_ae_project')
+      || sessionStorage.getItem('ftrack_shots_project')
+      || sessionStorage.getItem('ftrack_chat_project')
+      || sessionStorage.getItem('ftrack_reviews_project')
+      || ''
+    );
+  } catch {
+    return '';
+  }
 }
 
 /**

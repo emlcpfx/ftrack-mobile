@@ -73,6 +73,21 @@ export default async function handler(req, res) {
     return res.status(200).json({ message: 'No subscribers', sent: 0 });
   }
 
+  const serverUrl = process.env.FTRACK_SERVER;
+  const apiUser = process.env.FTRACK_API_USER;
+  const apiKey = process.env.FTRACK_API_KEY;
+  const useEnv = !!(serverUrl && apiUser && apiKey);
+
+  if (!useEnv) {
+    // Fall back to per-subscriber client keys (solo deploy without Vercel env)
+    const anyClientKey = subs.some((s) => s.ftrackApiKey && s.ftrackServer && s.ftrackUser);
+    if (!anyClientKey) {
+      return res.status(500).json({
+        error: 'No ftrack credentials: set FTRACK_* env, or have users re-enable push while logged in',
+      });
+    }
+  }
+
   const now = new Date();
   const lookback = new Date(now.getTime() - LOOKBACK_MINUTES * 60 * 1000);
   const lookbackStr = lookback.toISOString().replace('T', ' ').slice(0, 19);
@@ -80,20 +95,31 @@ export default async function handler(req, res) {
   let totalSent = 0;
   const errors = [];
 
+  const envClient = useEnv ? new FtrackClient(serverUrl, apiUser, apiKey) : null;
+
   for (const sub of subs) {
     try {
-      const client = new FtrackClient(sub.ftrackServer, sub.ftrackUser, sub.ftrackApiKey);
+      if (!sub.ftrackUser) continue;
 
-      // Build status filter
+      const client = envClient || (
+        sub.ftrackServer && sub.ftrackApiKey
+          ? new FtrackClient(sub.ftrackServer, sub.ftrackUser, sub.ftrackApiKey)
+          : null
+      );
+      if (!client) {
+        errors.push({ user: sub.ftrackUser, error: 'No credentials for subscriber' });
+        continue;
+      }
+
       const statusNames = (sub.watchStatuses || ['QC Ready'])
-        .map(s => `"${s}"`)
+        .map((s) => `"${String(s).replace(/"/g, '\\"')}"`)
         .join(', ');
 
-      // Query tasks whose status was recently updated to a watched status
-      // We use date.updated > lookback to find recently changed tasks
+      // Assigned tasks in watched statuses (recent activity)
       let query = `select id, name, status.name, parent.name, type.name
         from Task
         where status.name in (${statusNames})
+        and assignments.resource.username is "${String(sub.ftrackUser).replace(/"/g, '\\"')}"
         and date >= "${lookbackStr}"`;
 
       if (sub.projectId) {

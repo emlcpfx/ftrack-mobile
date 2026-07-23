@@ -10,15 +10,15 @@ import {
 import {
   isAePanel,
   getActiveComp,
-  getSelectedFootagePaths,
   pickMediaFiles,
   fileFromPath,
+  getSelectedFootagePaths,
 } from './bridge.js';
 import {
   resolveAeProject,
   persistSharedProjectId,
 } from './projectContext.js';
-import { resolvePublishFile } from './publishMatch.js';
+import { resolvePublishFile, pickTaskForHint } from './publishMatch.js';
 import {
   formatPublishError,
   isEmptyOrTinyFile,
@@ -356,24 +356,83 @@ export default function AePublish() {
     }
   };
 
-  const addFromAeSelection = async () => {
+  const onFromSelection = async () => {
     setPublishErr('');
     setBusy('select');
     try {
-      if (!isAePanel()) throw new Error('AE selection requires the After Effects panel');
-      const sel = await getSelectedFootagePaths();
-      if (!sel.ok) throw new Error(sel.error || 'Could not read selection');
-      const paths = sel.paths || [];
-      if (!paths.length) {
-        setPublishErr('No file-based footage selected in the AE project panel.');
+      if (!isAePanel()) throw new Error('Selection requires the After Effects panel');
+      const selected = await getSelectedFootagePaths();
+      if (!selected?.ok) throw new Error(selected?.error || 'Could not read Project Panel selection');
+      if (!selected.paths?.length) {
+        setPublishErr('Select footage / solids in the Project Panel first.');
         return;
       }
-      await loadPathsAsFiles(paths, 'AE selection');
+      await loadPathsAsFiles(selected.paths, 'Selection');
     } catch (e) {
-      setPublishErr(formatPublishError(e, 'AE selection'));
+      setPublishErr(formatPublishError(e, 'Selection'));
     } finally {
       setBusy('');
     }
+  };
+
+  const pickCandidateShot = async (fileId, shot) => {
+    const item = publishFiles.find((f) => f.id === fileId);
+    if (!item?.match?.parsed) return;
+    setBusy('match');
+    try {
+      const tasks = await fetchTasksForShot(shot.id);
+      const task = pickTaskForHint(tasks, item.match.parsed.taskHint);
+      if (!task) {
+        patchFile(fileId, {
+          status: 'error',
+          uploadError: `No "${item.match.parsed.taskHint}" task on ${shot.name}`,
+          match: {
+            ...item.match,
+            ok: false,
+            shot,
+            task: null,
+            tasks,
+            candidates: [],
+            error: `No "${item.match.parsed.taskHint}" task on ${shot.name}`,
+          },
+        });
+        return;
+      }
+      patchFile(fileId, {
+        status: 'matched',
+        uploadError: '',
+        match: {
+          ...item.match,
+          ok: true,
+          error: '',
+          shot,
+          task,
+          tasks,
+          candidates: [],
+          taskCandidates: [],
+        },
+      });
+    } catch (e) {
+      setPublishErr(formatPublishError(e, 'Match'));
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const pickCandidateTask = (fileId, task) => {
+    const item = publishFiles.find((f) => f.id === fileId);
+    if (!item?.match?.shot) return;
+    patchFile(fileId, {
+      status: 'matched',
+      uploadError: '',
+      match: {
+        ...item.match,
+        ok: true,
+        error: '',
+        task,
+        taskCandidates: [],
+      },
+    });
   };
 
   const matchedFiles = publishFiles.filter((f) => f.match?.ok && f.status !== 'done');
@@ -387,7 +446,7 @@ export default function AePublish() {
       return;
     }
     if (!publishFiles.length) {
-      setPublishErr('Add files via drop, browse, or AE selection.');
+      setPublishErr('Drop media or double-click to browse.');
       return;
     }
     const queue = publishFiles.filter((f) => f.match?.ok && f.status !== 'done');
@@ -401,7 +460,7 @@ export default function AePublish() {
     setPublishWarn('');
     setBusy('publish');
 
-    // Resolve QC Ready like the Python uploader (global Status name, not schema-only list)
+    // Resolve QC Ready like the desktop uploader (global Status name, not schema-only list)
     let qcReady = statuses.find((s) => /^qc ready$/i.test(s.name));
     if (!qcReady) {
       try {
@@ -432,6 +491,7 @@ export default function AePublish() {
             taskId: task.id,
             shotId: shot.id,
             file: item.file,
+            filePath: item.file?._aePath || item.file?.path || null,
             version: parsed?.version,
             setTaskStatusId: qcReady?.id,
             onProgress: ({ percent, phase, msg }) => {
@@ -439,7 +499,7 @@ export default function AePublish() {
               const label = phase === 'prepare'
                 ? 'Preparing'
                 : phase === 'encode'
-                  ? 'Finishing'
+                  ? 'Encoding'
                   : (msg || 'Uploading');
               setPublishMsg(
                 `${label} ${i + 1}/${queue.length}: ${item.name} · ${percent}%`,
@@ -511,9 +571,9 @@ export default function AePublish() {
 
   let gateHint = '';
   if (!projectId) gateHint = 'Pick a project above.';
-  else if (!publishFiles.length) gateHint = 'Add media via drop, browse, or AE selection.';
+  else if (!publishFiles.length) gateHint = 'Drop media or double-click to browse.';
   else if (resolving) gateHint = 'Matching filenames to shots…';
-  else if (!matchedFiles.length) gateHint = 'No files matched — need …_comp_v### naming like the Python uploader.';
+  else if (!matchedFiles.length) gateHint = 'No files matched — need …_comp_v### naming.';
   else if (unmatchedCount) gateHint = `${unmatchedCount} unmatched will be skipped.`;
 
   return (
@@ -557,36 +617,39 @@ export default function AePublish() {
           <div className="ae-section-title">Publish</div>
           <div className="ae-card">
             <div className="ae-meta" style={{ marginBottom: 8 }}>
-              Filenames auto-match shot + task (same rules as the Python uploader). Drop, browse, or pull AE selection.
+              Filenames auto-match shot + task. Drop files, double-click to browse, or use Project Panel selection.
             </div>
 
             <div
               className={`ae-drop${dropActive ? ' active' : ''}`}
+              role="button"
+              tabIndex={0}
+              title="Drop files or double-click to browse"
+              style={{ cursor: busy ? 'default' : 'pointer' }}
               onDragEnter={(e) => { e.preventDefault(); setDropActive(true); }}
               onDragOver={(e) => { e.preventDefault(); setDropActive(true); }}
               onDragLeave={(e) => { e.preventDefault(); setDropActive(false); }}
               onDrop={onDropFiles}
+              onDoubleClick={() => { if (!busy) onBrowseFiles(); }}
+              onKeyDown={(e) => {
+                if (!busy && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  onBrowseFiles();
+                }
+              }}
             >
-              <strong>Drop media here</strong>
-              from Explorer / Finder
+              <strong>{busy === 'browse' ? 'Browsing…' : busy === 'select' ? 'Reading selection…' : 'Drop media here'}</strong>
+              or double-click to browse
             </div>
 
-            <div className="ae-row">
+            <div className="ae-row" style={{ marginTop: 8 }}>
               <button
                 type="button"
                 className="ae-btn ghost"
                 disabled={!!busy}
-                onClick={onBrowseFiles}
+                onClick={onFromSelection}
               >
-                {busy === 'browse' ? 'Browsing…' : 'Browse…'}
-              </button>
-              <button
-                type="button"
-                className="ae-btn ghost"
-                disabled={!!busy}
-                onClick={addFromAeSelection}
-              >
-                {busy === 'select' ? 'Reading…' : 'From AE selection'}
+                From AE selection
               </button>
             </div>
 
@@ -602,7 +665,7 @@ export default function AePublish() {
                     const phase = f.progressPhase === 'prepare'
                       ? 'Preparing'
                       : f.progressPhase === 'encode'
-                        ? 'Finishing'
+                        ? 'Encoding'
                         : 'Uploading';
                     matchText = `${phase} ${pct}%`;
                   } else if (f.status === 'done') {
@@ -618,6 +681,8 @@ export default function AePublish() {
                     matchClass = 'bad';
                     matchText = m.error || 'Unmatched';
                   }
+                  const shotCandidates = (!m?.ok && m?.candidates?.length > 1) ? m.candidates : [];
+                  const taskCandidates = (!m?.ok && m?.taskCandidates?.length > 1) ? m.taskCandidates : [];
                   return (
                     <div key={f.id} className="ae-file-row">
                       <div className="ae-file-top">
@@ -633,6 +698,38 @@ export default function AePublish() {
                         </button>
                       </div>
                       <div className={`ae-file-match ${matchClass}`}>{matchText}</div>
+                      {shotCandidates.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                          {shotCandidates.slice(0, 6).map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              className="ae-btn ghost"
+                              style={{ padding: '2px 8px', fontSize: 10 }}
+                              disabled={!!busy}
+                              onClick={() => pickCandidateShot(f.id, s)}
+                            >
+                              {s.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {taskCandidates.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                          {taskCandidates.map((t) => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              className="ae-btn ghost"
+                              style={{ padding: '2px 8px', fontSize: 10 }}
+                              disabled={!!busy}
+                              onClick={() => pickCandidateTask(f.id, t)}
+                            >
+                              {t.type || t.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       {f.status === 'uploading' && (
                         <div className="ae-prog" aria-hidden>
                           <span style={{ width: `${Math.max(2, f.progress || 0)}%` }} />

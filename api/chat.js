@@ -551,12 +551,19 @@ export default async function handler(req, res) {
   if (!messages || !provider || !llmApiKey) {
     return res.status(400).json({ error: 'Missing required fields: messages, provider, llmApiKey' });
   }
-  if (!ftrackServer || !ftrackUser || !ftrackApiKey) {
-    return res.status(400).json({ error: 'Missing ftrack credentials' });
+
+  // Prefer server env; fall back to logged-in user's creds from the client
+  const resolvedServer = process.env.FTRACK_SERVER || ftrackServer;
+  const resolvedUser = process.env.FTRACK_API_USER || ftrackUser;
+  const resolvedKey = process.env.FTRACK_API_KEY || ftrackApiKey;
+  if (!resolvedServer || !resolvedUser || !resolvedKey) {
+    return res.status(400).json({
+      error: 'Missing ftrack credentials (log in, or set FTRACK_* on the server)',
+    });
   }
 
   try {
-    const client = new FtrackClient(ftrackServer, ftrackUser, ftrackApiKey);
+    const client = new FtrackClient(resolvedServer, resolvedUser, resolvedKey);
     let systemPrompt = SYSTEM_PROMPT;
     if (projectId && projectName) {
       systemPrompt += `\n\nThe user is currently working in project "${projectName}" (ID: "${projectId}"). When they refer to tasks, shots, reviews, etc. without specifying a project, assume they mean this project. Always use this project_id for filtering unless they explicitly ask about a different project.`;

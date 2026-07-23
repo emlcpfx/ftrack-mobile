@@ -10,8 +10,8 @@
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>
-      <!-- After Effects 2019+ through future versions (incl. 2025 / CEP 12) -->
-      <Host Name="AEFT" Version="[16.0,99.9]" />
+      <!-- CSXS 11 ships with AE 2022 (22.0)+; keep host range aligned or panel silently fails to load -->
+      <Host Name="AEFT" Version="[22.0,99.9]" />
     </HostList>
     <LocaleList>
       <Locale Code="All" />
