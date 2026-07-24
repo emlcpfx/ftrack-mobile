@@ -3,6 +3,7 @@ import { createNote, fetchNotes } from '../api/ftrack.js';
 
 /**
  * Compact notes list + composer for Shots detail (CEP / mobile).
+ * Dailies bay: amber left-rail notes.
  * @param {{ parentId: string, parentType: string, label?: string }} props
  */
 export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
@@ -54,7 +55,7 @@ export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
 
   if (!parentId) {
     return (
-      <div style={{ padding: '8px 20px 16px', color: 'var(--muted)', fontSize: 12 }}>
+      <div style={{ padding: '8px 16px 16px', color: 'var(--muted)', fontSize: 12 }}>
         Select a version to leave notes.
       </div>
     );
@@ -66,10 +67,10 @@ export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
         Notes{label ? ` · ${label}` : ''}
       </div>
       {loading && (
-        <div style={{ padding: '8px 20px', color: 'var(--muted)', fontSize: 12 }}>Loading…</div>
+        <div style={{ padding: '8px 16px', color: 'var(--muted)', fontSize: 12 }}>Loading…</div>
       )}
       {!loading && notes.length === 0 && (
-        <div style={{ padding: '4px 20px 8px', color: 'var(--muted)', fontSize: 12 }}>No notes yet</div>
+        <div style={{ padding: '4px 16px 8px', color: 'var(--muted)', fontSize: 12 }}>No notes yet</div>
       )}
       <div style={{ padding: '0 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {notes.map((n) => (
@@ -78,16 +79,17 @@ export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
             style={{
               background: 'var(--card)',
               border: '1px solid var(--border)',
-              borderRadius: 8,
+              borderLeft: '3px solid var(--accent)',
+              borderRadius: '2px 6px 6px 2px',
               padding: '8px 10px',
             }}
           >
-            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 4, fontFamily: 'var(--font-mono)' }}>
               {[n.author?.first_name, n.author?.last_name].filter(Boolean).join(' ') || 'User'}
               {n.frame_number != null ? ` · f${n.frame_number}` : ''}
               {n.category?.name ? ` · ${n.category.name}` : ''}
             </div>
-            <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            <div style={{ fontSize: 13, whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: 1.45 }}>
               {n.content}
             </div>
           </div>
@@ -105,7 +107,7 @@ export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
             width: '100%',
             background: 'var(--card2)',
             border: '1px solid var(--border)',
-            borderRadius: 8,
+            borderRadius: 6,
             padding: '8px 10px',
             color: 'var(--text)',
             fontSize: 13,
@@ -124,7 +126,7 @@ export default function ShotDetailNotes({ parentId, parentType, label = '' }) {
             border: 'none',
             borderRadius: 6,
             padding: '8px 14px',
-            color: '#fff',
+            color: '#141210',
             fontSize: 12,
             fontWeight: 600,
             cursor: text.trim() && !busy ? 'pointer' : 'default',

@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>ftrack AE panel — design directions</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --page: #0e0f10;
+      --ink: #e6e4df;
+      --quiet: #7a7872;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--page);
+      color: var(--ink);
+      font-family: "DM Sans", system-ui, sans-serif;
+      min-height: 100vh;
+      padding: 28px 20px 60px;
+    }
+    .page-head {
+      max-width: 1100px;
+      margin: 0 auto 28px;
+    }
+    .page-head h1 {
+      font-family: "Schibsted Grotesk", "DM Sans", sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 8px;
+    }
+    .page-head p {
+      color: var(--quiet);
+      font-size: 14px;
+      line-height: 1.5;
+      max-width: 62ch;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 20px 0 8px;
+    }
+    .tabs button {
+      appearance: none;
+      border: 1px solid #2a2b2c;
+      background: #161718;
+      color: var(--ink);
+      font: 600 12px/1 "DM Sans", sans-serif;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 10px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] {
+      background: #e6e4df;
+      color: #111;
+      border-color: #e6e4df;
+    }
+    .blurb {
+      color: var(--quiet);
+      font-size: 13px;
+      line-height: 1.45;
+      max-width: 70ch;
+      margin-bottom: 22px;
+      min-height: 3.2em;
+    }
+    .stage {
+      display: flex;
+      justify-content: center;
+      padding: 12px 0 40px;
+    }
+    .phone {
+      width: 380px;
+      height: 720px;
+      border-radius: 18px;
+      overflow: hidden;
+      border: 1px solid #2c2d2e;
+      box-shadow: 0 30px 80px rgba(0,0,0,0.45);
+      position: relative;
+      display: none;
+      flex-direction: column;
+    }
+    .phone.active { display: flex; }
+    .panel { flex: 1; overflow: auto; min-height: 0; }
+    .nav {
+      display: flex;
+      border-top: 1px solid;
+      flex-shrink: 0;
+      height: 56px;
+    }
+    .nav span {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      opacity: 0.55;
+    }
+    .nav span.on { opacity: 1; }
+    .badge {
+      position: absolute;
+      top: 4px;
+      right: calc(20% - 6px);
+      font-size: 9px;
+      font-weight: 700;
+      padding: 1px 5px;
+      border-radius: 8px;
+      color: #fff;
+    }
+
+    /* ══════════ A · DAILIES BAY ══════════ */
+    .a {
+      --bg: #141210;
+      --surf: #1c1916;
+      --line: #2e2924;
+      --text: #f2efe8;
+      --mute: #9a9288;
+      --fix: #e8a04a;
+      --play: #6eb5a8;
+      --accent: #c4b5a0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "DM Sans", sans-serif;
+    }
+    .a .nav { background: var(--surf); border-color: var(--line); color: var(--mute); }
+    .a .nav span.on { color: var(--fix); }
+    .a .badge { background: var(--fix); right: 28%; }
+    .a .top {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px; border-bottom: 1px solid var(--line); background: var(--surf);
+    }
+    .a .back { color: var(--mute); font-size: 12px; font-weight: 600; }
+    .a .code {
+      margin-left: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 13px; font-weight: 600; letter-spacing: -0.02em;
+    }
+    .a .gate {
+      position: relative;
+      aspect-ratio: 16/9;
+      background: #0a0908;
+      border-bottom: 1px solid var(--line);
+    }
+    .a .gate::before, .a .gate::after {
+      content: "";
+      position: absolute; width: 14px; height: 14px;
+      border: 1.5px solid rgba(242,239,232,0.35);
+      z-index: 2;
+    }
+    .a .gate::before { top: 8px; left: 8px; border-right: 0; border-bottom: 0; }
+    .a .gate::after { bottom: 8px; right: 8px; border-left: 0; border-top: 0; }
+    .a .frame {
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(160deg, #2a2420 0%, #12100e 55%),
+        repeating-linear-gradient(90deg, transparent, transparent 3px, rgba(255,255,255,0.02) 3px, rgba(255,255,255,0.02) 4px);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .a .play {
+      width: 48px; height: 48px; border-radius: 50%;
+      background: rgba(110,181,168,0.92); color: #0a0908;
+      display: grid; place-items: center;
+      font-size: 16px; border: none; cursor: pointer;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    }
+    .a .meta-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px; border-bottom: 1px solid var(--line);
+      font-size: 11px; color: var(--mute);
+    }
+    .a .take {
+      font-family: "IBM Plex Mono", monospace;
+      color: var(--text); font-weight: 600;
+    }
+    .a .chip {
+      margin-left: auto;
+      background: rgba(232,160,74,0.15);
+      color: var(--fix);
+      border: 1px solid rgba(232,160,74,0.35);
+      padding: 3px 8px; border-radius: 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .a .tools {
+      display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--line);
+    }
+    .a .tools button {
+      appearance: none; border: 1px solid var(--line); background: var(--surf);
+      color: var(--mute); font: 600 10px/1 "DM Sans", sans-serif;
+      padding: 6px 9px; border-radius: 4px; cursor: pointer;
+    }
+    .a .tools button.pri {
+      background: var(--play); color: #0a0908; border-color: var(--play);
+    }
+    .a .sec {
+      padding: 12px 14px 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--mute);
+    }
+    .a .task {
+      margin: 0 14px 10px; padding: 10px 12px;
+      background: var(--surf); border: 1px solid var(--line); border-radius: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .a .task strong { font-size: 13px; font-weight: 600; }
+    .a .task .who { font-size: 11px; color: var(--mute); margin-top: 2px; }
+    .a .note {
+      margin: 0 14px 12px; padding: 12px;
+      background: #1a1714; border-left: 3px solid var(--fix);
+      border-radius: 0 8px 8px 0;
+    }
+    .a .note .who {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px; color: var(--mute); margin-bottom: 6px;
+    }
+    .a .note p { font-size: 13px; line-height: 1.45; color: var(--text); }
+    .a .composer {
+      margin: 0 14px 16px;
+    }
+    .a .composer textarea {
+      width: 100%; min-height: 56px; resize: none;
+      background: var(--surf); border: 1px solid var(--line);
+      border-radius: 8px; padding: 10px; color: var(--text);
+      font: 13px/1.4 "DM Sans", sans-serif;
+    }
+
+    /* ══════════ B · SLATE RAIL ══════════ */
+    .b {
+      --bg: #101214;
+      --surf: #181b1f;
+      --line: #2a3038;
+      --text: #eef1f4;
+      --mute: #8b949e;
+      --rail: #d97757;
+      --ink2: #5b8def;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Schibsted Grotesk", "DM Sans", sans-serif;
+    }
+    .b .nav { background: var(--surf); border-color: var(--line); color: var(--mute); }
+    .b .nav span.on { color: var(--rail); }
+    .b .badge { background: var(--rail); }
+    .b .shell { display: flex; min-height: 100%; }
+    .b .rail {
+      width: 6px; flex-shrink: 0; background: var(--rail);
+    }
+    .b .body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+    .b .top {
+      padding: 14px 16px 10px; border-bottom: 1px solid var(--line);
+    }
+    .b .crumb { font-size: 11px; color: var(--mute); font-weight: 500; margin-bottom: 10px; font-family: "DM Sans", sans-serif; }
+    .b .slate {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 4px 12px;
+      align-items: end;
+    }
+    .b .shot {
+      font-size: 26px; font-weight: 700; letter-spacing: -0.04em; line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .b .take-big {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 22px; font-weight: 600; color: var(--mute);
+      letter-spacing: -0.03em;
+    }
+    .b .sub {
+      grid-column: 1 / -1;
+      display: flex; gap: 8px; align-items: center; margin-top: 6px;
+      font-family: "DM Sans", sans-serif; font-size: 11px; color: var(--mute);
+    }
+    .b .paint {
+      width: 10px; height: 10px; border-radius: 2px; background: var(--rail);
+    }
+    .b .player {
+      margin: 12px 16px 0;
+      border-radius: 2px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      aspect-ratio: 16/9;
+      background: #0a0b0c;
+      display: grid; place-items: center;
+      position: relative;
+    }
+    .b .player::after {
+      content: "LLL_FA_020  ·  v002";
+      position: absolute; left: 8px; bottom: 6px;
+      font-family: "IBM Plex Mono", monospace; font-size: 9px; color: rgba(238,241,244,0.55);
+    }
+    .b .play {
+      width: 44px; height: 44px; border-radius: 2px;
+      background: var(--ink2); border: none; color: #fff;
+      font-size: 14px; cursor: pointer;
+    }
+    .b .row {
+      display: flex; gap: 6px; padding: 10px 16px; flex-wrap: wrap;
+      font-family: "DM Sans", sans-serif;
+    }
+    .b .row button {
+      appearance: none; border: 1px solid var(--line); background: transparent;
+      color: var(--mute); font: 600 11px/1 "DM Sans", sans-serif;
+      padding: 7px 10px; border-radius: 2px; cursor: pointer;
+    }
+    .b .row button.pri { background: var(--text); color: #111; border-color: var(--text); }
+    .b .label {
+      padding: 8px 16px 4px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--mute);
+      font-family: "DM Sans", sans-serif;
+    }
+    .b .task {
+      margin: 0 16px 8px; padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+      display: flex; justify-content: space-between; align-items: center;
+      font-family: "DM Sans", sans-serif;
+    }
+    .b .task strong { font-size: 13px; font-weight: 600; }
+    .b .task em { font-style: normal; font-size: 11px; color: var(--mute); }
+    .b .note {
+      margin: 4px 16px 12px;
+      padding: 0 0 0 12px;
+      border-left: 2px solid var(--rail);
+      font-family: "DM Sans", sans-serif;
+    }
+    .b .note .who { font-size: 11px; color: var(--mute); margin-bottom: 4px; }
+    .b .note p { font-size: 13px; line-height: 1.5; }
+    .b .composer {
+      margin: 0 16px 16px;
+    }
+    .b .composer textarea {
+      width: 100%; min-height: 52px; resize: none;
+      background: transparent; border: 0; border-bottom: 1px solid var(--line);
+      border-radius: 0; padding: 8px 0; color: var(--text);
+      font: 13px/1.4 "DM Sans", sans-serif;
+    }
+
+    /* ══════════ C · SCRIPT NOTES ══════════ */
+    .c {
+      --bg: #f3efe6;
+      --surf: #fffdf8;
+      --line: #d9d2c4;
+      --text: #1c1a16;
+      --mute: #6f685c;
+      --fix: #b54a2a;
+      --ink: #1f4d6d;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "DM Sans", sans-serif;
+    }
+    .c .nav { background: var(--surf); border-color: var(--line); color: var(--mute); }
+    .c .nav span.on { color: var(--fix); }
+    .c .badge { background: var(--fix); }
+    .c .top {
+      display: flex; align-items: baseline; gap: 10px;
+      padding: 12px 14px; background: var(--surf);
+      border-bottom: 1px solid var(--line);
+    }
+    .c .back { font-size: 12px; color: var(--mute); font-weight: 600; }
+    .c .code {
+      margin-left: auto;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 12px; font-weight: 600;
+    }
+    .c .banner {
+      background: var(--fix); color: #fffdf8;
+      padding: 8px 14px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; font-weight: 600;
+    }
+    .c .banner .mono {
+      font-family: "IBM Plex Mono", monospace; font-weight: 500; opacity: 0.85;
+    }
+    .c .player {
+      margin: 12px 14px;
+      background: #1c1a16;
+      border-radius: 6px;
+      aspect-ratio: 16/9;
+      display: grid; place-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .c .player .scrub {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 3px;
+      background: rgba(255,255,255,0.15);
+    }
+    .c .player .scrub > i {
+      display: block; width: 38%; height: 100%; background: #e8c27a;
+    }
+    .c .play {
+      width: 46px; height: 46px; border-radius: 50%;
+      border: 2px solid rgba(255,253,248,0.85); background: transparent;
+      color: #fffdf8; font-size: 14px; cursor: pointer;
+    }
+    .c .actions {
+      display: flex; gap: 6px; padding: 0 14px 10px;
+    }
+    .c .actions button {
+      appearance: none; border: 1px solid var(--line); background: var(--surf);
+      color: var(--text); font: 600 11px/1 "DM Sans", sans-serif;
+      padding: 8px 10px; border-radius: 6px; cursor: pointer;
+    }
+    .c .actions button.pri { background: var(--ink); color: #fffdf8; border-color: var(--ink); }
+    .c .notes-head {
+      padding: 6px 14px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--mute); border-top: 1px dashed var(--line);
+    }
+    .c .note {
+      display: grid;
+      grid-template-columns: 52px 1fr;
+      gap: 0 10px;
+      margin: 0 14px 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .c .fr {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px; font-weight: 600; color: var(--fix);
+      padding-top: 2px;
+    }
+    .c .note .who { font-size: 11px; color: var(--mute); margin-bottom: 4px; }
+    .c .note p { font-size: 13px; line-height: 1.45; }
+    .c .task {
+      margin: 0 14px 10px; padding: 10px 12px;
+      background: var(--surf); border: 1px solid var(--line); border-radius: 8px;
+      display: flex; justify-content: space-between; align-items: center;
+      font-size: 13px;
+    }
+    .c .task span { font-size: 11px; color: var(--fix); font-weight: 700; }
+    .c .composer {
+      margin: 0 14px 16px;
+    }
+    .c .composer textarea {
+      width: 100%; min-height: 56px; resize: none;
+      background: var(--surf); border: 1px solid var(--line);
+      border-radius: 8px; padding: 10px; color: var(--text);
+      font: 13px/1.4 "DM Sans", sans-serif;
+    }
+
+    .legend {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    @media (max-width: 900px) {
+      .legend { grid-template-columns: 1fr; }
+    }
+    .legend article {
+      border: 1px solid #2a2b2c;
+      border-radius: 12px;
+      padding: 14px 16px;
+      background: #161718;
+    }
+    .legend h3 {
+      font-family: "Schibsted Grotesk", sans-serif;
+      font-size: 15px; font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .legend p { font-size: 12px; color: var(--quiet); line-height: 1.45; }
+    .legend .tok {
+      margin-top: 10px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px; color: #a8a59e;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-head">
+    <h1>Shot detail — three directions</h1>
+    <p>
+      Subject: CleanPlateFX AE ftrack panel. Audience: compositors mid-fix.
+      Job of this screen: see the version you’re fixing and the note that put it in Fix — without hunting.
+      Signature risk per direction is intentional; chrome stays quiet.
+    </p>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" aria-selected="true" data-dir="a">A · Dailies bay</button>
+      <button type="button" role="tab" aria-selected="false" data-dir="b">B · Slate rail</button>
+      <button type="button" role="tab" aria-selected="false" data-dir="c">C · Script notes</button>
+    </div>
+    <p class="blurb" id="blurb">
+      Media is the thesis. Film-gate corners on the player; Fix as warm amber (not pink chrome).
+      Shot codes in IBM Plex Mono. Play is teal so it never competes with status.
+    </p>
+  </div>
+
+  <div class="stage">
+    <!-- A -->
+    <div class="phone a active" id="phone-a" data-dir="a">
+      <div class="panel">
+        <div class="top">
+          <span class="back">← Shots</span>
+          <span class="code">LLL_FA_020</span>
+        </div>
+        <div class="gate">
+          <div class="frame"><button class="play" type="button" aria-label="Play">▶</button></div>
+        </div>
+        <div class="meta-row">
+          <span class="take">v002</span>
+          <span>· Roxane · yesterday</span>
+          <span class="chip">Fix</span>
+        </div>
+        <div class="tools">
+          <button class="pri" type="button">Play version</button>
+          <button type="button">Import original</button>
+          <button type="button">Proxy</button>
+        </div>
+        <div class="sec">Task</div>
+        <div class="task">
+          <div>
+            <strong>Compositing</strong>
+            <div class="who">Eric Levy</div>
+          </div>
+          <span class="chip">Fix</span>
+        </div>
+        <div class="sec">Note on v002</div>
+        <div class="note">
+          <div class="who">Roxane · client</div>
+          <p>too strong — color doesn’t match the warm skin under her eyes. reduce ~50% and look again.</p>
+        </div>
+        <div class="composer">
+          <textarea placeholder="Reply on this version…"></textarea>
+        </div>
+      </div>
+      <div class="nav">
+        <span class="on">Shots</span>
+        <span>Publish</span>
+        <span>Reviews</span>
+        <span style="position:relative">Alerts<span class="badge">4</span></span>
+        <span>Chat</span>
+      </div>
+    </div>
+
+    <!-- B -->
+    <div class="phone b" id="phone-b" data-dir="b">
+      <div class="panel">
+        <div class="shell">
+          <div class="rail" title="Status color"></div>
+          <div class="body">
+            <div class="top">
+              <div class="crumb">← Shots</div>
+              <div class="slate">
+                <div class="shot">LLL_FA_020</div>
+                <div class="take-big">v002</div>
+                <div class="sub"><span class="paint"></span> Fix · Compositing · Eric</div>
+              </div>
+            </div>
+            <div class="player"><button class="play" type="button">▶</button></div>
+            <div class="row">
+              <button class="pri" type="button">Play</button>
+              <button type="button">Original</button>
+              <button type="button">Proxy</button>
+              <button type="button">+ Review</button>
+            </div>
+            <div class="label">Feedback</div>
+            <div class="note">
+              <div class="who">Roxane</div>
+              <p>too strong — color doesn’t match the warm skin under her eyes. reduce ~50% and look again.</p>
+            </div>
+            <div class="label">Task</div>
+            <div class="task">
+              <div><strong>Compositing</strong><br /><em>Assigned to you</em></div>
+            </div>
+            <div class="composer"><textarea placeholder="Leave a note…"></textarea></div>
+          </div>
+        </div>
+      </div>
+      <div class="nav">
+        <span class="on">Shots</span>
+        <span>Publish</span>
+        <span>Reviews</span>
+        <span style="position:relative">Alerts<span class="badge">4</span></span>
+        <span>Chat</span>
+      </div>
+    </div>
+
+    <!-- C -->
+    <div class="phone c" id="phone-c" data-dir="c">
+      <div class="panel">
+        <div class="top">
+          <span class="back">← Shots</span>
+          <span class="code">LLL_FA_020</span>
+        </div>
+        <div class="banner">
+          <span>Fix</span>
+          <span class="mono">v002</span>
+          <span style="margin-left:auto;opacity:.8">Compositing</span>
+        </div>
+        <div class="player">
+          <button class="play" type="button">▶</button>
+          <div class="scrub"><i></i></div>
+        </div>
+        <div class="actions">
+          <button class="pri" type="button">Play version</button>
+          <button type="button">Import</button>
+          <button type="button">Proxy</button>
+        </div>
+        <div class="task">
+          <strong>Compositing · Eric Levy</strong>
+          <span>FIX</span>
+        </div>
+        <div class="notes-head">Notes · version 002</div>
+        <div class="note">
+          <div class="fr">f—</div>
+          <div>
+            <div class="who">Roxane</div>
+            <p>too strong — color doesn’t match the warm skin under her eyes. reduce ~50% and look again.</p>
+          </div>
+        </div>
+        <div class="composer"><textarea placeholder="Note on this version…"></textarea></div>
+      </div>
+      <div class="nav">
+        <span class="on">Shots</span>
+        <span>Publish</span>
+        <span>Reviews</span>
+        <span style="position:relative">Alerts<span class="badge">4</span></span>
+        <span>Chat</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <article>
+      <h3>A · Dailies bay</h3>
+      <p>Best if play + note is the daily loop. Warm charcoal grading-suite feel. Avoids current pink chrome.</p>
+      <div class="tok">#141210 · #e8a04a Fix · #6eb5a8 Play · Plex Mono codes</div>
+    </article>
+    <article>
+      <h3>B · Slate rail</h3>
+      <p>Status as a physical paint rail. Shot code is the display face. Sharp corners = production slate, not soft SaaS cards.</p>
+      <div class="tok">#101214 · #d97757 rail · #5b8def Play · Schibsted + Plex</div>
+    </article>
+    <article>
+      <h3>C · Script notes</h3>
+      <p>Paper-bay risk: light UI inside dark AE. Frame gutter for notes (script supervisor). Loud Fix banner = can’t miss why you’re here.</p>
+      <div class="tok">#f3efe6 paper · #b54a2a Fix · #1f4d6d Play · dashed rules</div>
+    </article>
+  </div>
+
+  <script>
+    const blurbs = {
+      a: "Media is the thesis. Film-gate corners on the player; Fix as warm amber (not pink chrome). Shot codes in IBM Plex Mono. Play is teal so it never competes with status.",
+      b: "Status becomes a left paint rail — you feel Fix before you read it. Huge shot code, take as typography. Square play = slate hardware, not pill UI.",
+      c: "Paper against AE chrome on purpose. Fix banner is unmissable. Notes use a frame gutter like script markup — ready for real frame numbers later."
+    };
+    const tabs = document.querySelectorAll('.tabs button');
+    const phones = document.querySelectorAll('.phone');
+    const blurb = document.getElementById('blurb');
+    tabs.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const dir = btn.dataset.dir;
+        tabs.forEach((b) => b.setAttribute('aria-selected', b === btn ? 'true' : 'false'));
+        phones.forEach((p) => p.classList.toggle('active', p.dataset.dir === dir));
+        blurb.textContent = blurbs[dir];
+      });
+    });
+  </script>
+</body>
+</html>

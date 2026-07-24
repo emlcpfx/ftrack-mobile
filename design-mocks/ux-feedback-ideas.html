@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UX feedback ideas — notes / publish / async</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500;600&family=Schibsted+Grotesk:wght@600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --page: #0c0d0e;
+      --ink: #e8eaed;
+      --muted: #8b9298;
+      --faint: #5c636a;
+      --bg: #1a1d21;
+      --surface: #22262b;
+      --card: #282d33;
+      --card2: #2f353c;
+      --border: #3a4049;
+      --accent: #0097ce;
+      --accent2: #00b4d8;
+      --green: #4caf50;
+      --red: #e74c3c;
+      --amber: #f5a623;
+      --blue: #2196f3;
+      --warm: #e8a04a;
+      --easing: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--page);
+      color: var(--ink);
+      font-family: "DM Sans", system-ui, sans-serif;
+      padding: 28px 20px 80px;
+      line-height: 1.45;
+    }
+    .wrap { max-width: 1280px; margin: 0 auto; }
+    h1 {
+      font-family: "Schibsted Grotesk", "DM Sans", sans-serif;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      margin-bottom: 6px;
+    }
+    .lede {
+      color: var(--muted);
+      font-size: 14px;
+      max-width: 74ch;
+      margin-bottom: 8px;
+    }
+    .meta {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      color: var(--faint);
+      margin-bottom: 28px;
+    }
+    .meta strong { color: var(--accent2); font-weight: 500; }
+    .meta a { color: var(--accent2); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 22px;
+    }
+    .idea { display: flex; flex-direction: column; gap: 10px; }
+    .idea-label { display: flex; flex-direction: column; gap: 4px; min-height: 5.2em; }
+    .idea-label .n {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    .idea-label h2 {
+      font-size: 15px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .idea-label p { font-size: 12.5px; color: var(--muted); }
+
+    /* CEP frame */
+    .cep {
+      width: 100%;
+      max-width: 340px;
+      height: 520px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.4);
+      font-size: 12px;
+      position: relative;
+    }
+    .cep-head {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .cep-head .proj { font-weight: 650; font-size: 13px; flex: 1; min-width: 0; }
+    .cep-tabs {
+      display: flex; gap: 2px; padding: 0 8px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .cep-tabs span {
+      padding: 8px 10px; color: var(--muted);
+      font-size: 11px; font-weight: 600;
+      border-bottom: 2px solid transparent;
+    }
+    .cep-tabs .on { color: var(--ink); border-bottom-color: var(--accent); }
+    .cep-body { flex: 1; overflow: auto; min-height: 0; padding-bottom: 8px; }
+    .cep-foot {
+      display: flex;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .cep-foot span {
+      flex: 1; text-align: center;
+      padding: 10px 4px 12px;
+      font-size: 10px; font-weight: 600; color: var(--muted);
+    }
+    .cep-foot .on { color: var(--accent); }
+
+    .shot-bar {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .shot-bar .code {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 14px; font-weight: 600;
+    }
+    .shot-bar .sub {
+      font-size: 10px; color: var(--muted); margin-top: 3px;
+    }
+    .sec {
+      padding: 10px 12px 4px;
+      font-size: 10px; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+    }
+
+    .btn {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--accent);
+      font: 600 11px/1 "DM Sans", sans-serif;
+      padding: 8px 12px;
+      border-radius: 7px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 160ms var(--easing), border-color 160ms, opacity 160ms;
+      min-height: 36px;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.solid {
+      background: var(--accent);
+      color: #041018;
+      border-color: var(--accent);
+    }
+    .btn.solid:disabled,
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+    .btn.ghost { color: var(--muted); }
+    .btn.danger {
+      color: var(--red);
+      border-color: rgba(231,76,60,0.45);
+    }
+    .btn.block { width: 100%; }
+
+    /* ── IDEA 1 · Skeleton notes ── */
+    .skel {
+      margin: 0 12px 8px;
+      padding: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: 2px 7px 7px 2px;
+    }
+    .skel-line {
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(90deg, var(--card2) 0%, #3a4149 50%, var(--card2) 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.2s ease-in-out infinite;
+    }
+    .skel-line.short { width: 42%; margin-bottom: 8px; height: 6px; }
+    .skel-line.long { width: 92%; margin-bottom: 6px; }
+    .skel-line.mid { width: 68%; }
+    @keyframes shimmer {
+      0% { background-position: 100% 0; }
+      100% { background-position: -100% 0; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .skel-line { animation: none; background: var(--card2); }
+      .spin { animation: none !important; }
+      .toast-in { animation: none !important; }
+      .pulse-dot { animation: none !important; }
+    }
+
+    /* ── IDEA 2 · Empty + CTA ── */
+    .empty {
+      margin: 8px 12px 12px;
+      padding: 22px 14px;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      text-align: center;
+    }
+    .empty .ico {
+      width: 36px; height: 36px; margin: 0 auto 10px;
+      border-radius: 9px;
+      background: rgba(0,151,206,0.12);
+      color: var(--accent);
+      display: grid; place-items: center;
+    }
+    .empty strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 650;
+      margin-bottom: 4px;
+    }
+    .empty p {
+      font-size: 11.5px;
+      color: var(--muted);
+      margin-bottom: 12px;
+      max-width: 28ch;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ── IDEA 3 · Inline publish error ── */
+    .pub-card {
+      margin: 8px 12px;
+      padding: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .pub-card .lab {
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); margin-bottom: 6px;
+    }
+    .field {
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 8px 10px;
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 11px;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+    .field.bad {
+      border-color: rgba(231,76,60,0.65);
+      box-shadow: 0 0 0 2px rgba(231,76,60,0.15);
+    }
+    .err-block {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      padding: 8px 9px;
+      background: rgba(231,76,60,0.1);
+      border: 1px solid rgba(231,76,60,0.35);
+      border-radius: 7px;
+      margin-bottom: 10px;
+    }
+    .err-block .mark {
+      flex-shrink: 0;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--red);
+      color: #fff;
+      font-size: 11px; font-weight: 700;
+      display: grid; place-items: center;
+      margin-top: 1px;
+    }
+    .err-block .msg { flex: 1; min-width: 0; }
+    .err-block .msg strong {
+      display: block;
+      font-size: 12px;
+      color: #ffb4ab;
+      margin-bottom: 2px;
+    }
+    .err-block .msg span {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .err-actions { display: flex; gap: 6px; margin-top: 8px; }
+
+    /* ── IDEA 4 · Sticky CTA loading ── */
+    .sticky-cta {
+      position: absolute;
+      left: 0; right: 0; bottom: 44px;
+      padding: 10px 12px;
+      background: linear-gradient(180deg, transparent, var(--bg) 28%);
+      border-top: 1px solid var(--border);
+      display: flex; gap: 8px;
+      z-index: 5;
+    }
+    .sticky-cta .btn { flex: 1; }
+    .spin {
+      width: 12px; height: 12px;
+      border: 2px solid rgba(4,16,24,0.25);
+      border-top-color: #041018;
+      border-radius: 50%;
+      display: inline-block;
+      animation: spin 0.7s linear infinite;
+      vertical-align: -1px;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .btn.busy {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .phase {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px;
+      color: var(--amber);
+      text-align: center;
+      padding: 0 12px 6px;
+    }
+    .pulse-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--amber);
+      margin-right: 6px;
+      animation: pulse 1s ease-in-out infinite;
+      vertical-align: 1px;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+
+    /* ── IDEA 5 · Toast stack ── */
+    .toast-stack {
+      position: absolute;
+      left: 10px; right: 10px;
+      bottom: 56px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 20;
+      pointer-events: none;
+    }
+    .toast {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 9px 10px;
+      border-radius: 8px;
+      background: #111418;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 28px rgba(0,0,0,0.45);
+      pointer-events: auto;
+      animation: toast-in 220ms var(--easing);
+    }
+    .toast.ok { border-color: rgba(76,175,80,0.45); }
+    .toast.bad { border-color: rgba(231,76,60,0.5); }
+    .toast .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      margin-top: 4px; flex-shrink: 0;
+    }
+    .toast.ok .dot { background: var(--green); box-shadow: 0 0 0 3px rgba(76,175,80,0.2); }
+    .toast.bad .dot { background: var(--red); box-shadow: 0 0 0 3px rgba(231,76,60,0.2); }
+    .toast .body { flex: 1; min-width: 0; }
+    .toast .body strong {
+      display: block;
+      font-size: 12px;
+      font-weight: 650;
+      margin-bottom: 1px;
+    }
+    .toast .body span {
+      font-size: 10.5px;
+      color: var(--muted);
+      font-family: "IBM Plex Mono", monospace;
+    }
+    .toast .x {
+      appearance: none; border: 0; background: transparent;
+      color: var(--faint); cursor: pointer;
+      font-size: 14px; line-height: 1; padding: 2px 4px;
+      min-width: 28px; min-height: 28px;
+    }
+    .toast .bar {
+      position: absolute;
+      left: 0; bottom: 0; height: 2px;
+      background: var(--green);
+      width: 62%;
+      border-radius: 0 0 0 8px;
+      opacity: 0.7;
+    }
+    .toast { position: relative; overflow: hidden; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* notes composer after empty */
+    .composer {
+      margin: 0 12px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .composer textarea {
+      width: 100%;
+      min-height: 64px;
+      resize: none;
+      background: var(--card2);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 8px 10px;
+      color: var(--ink);
+      font: 12.5px/1.4 "DM Sans", sans-serif;
+    }
+    .composer textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px rgba(0,151,206,0.2);
+    }
+    .note {
+      margin: 0 12px 8px;
+      padding: 8px 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--warm);
+      border-radius: 2px 7px 7px 2px;
+    }
+    .note .who {
+      font-family: "IBM Plex Mono", monospace;
+      font-size: 10px; color: var(--muted); margin-bottom: 4px;
+    }
+    .note p { font-size: 12.5px; line-height: 1.45; }
+    .note.pending {
+      opacity: 0.7;
+      border-left-color: var(--accent);
+    }
+    .note.pending .who::after {
+      content: " · sending…";
+      color: var(--accent);
+    }
+
+    .cmp {
+      display: flex; gap: 6px; flex-wrap: wrap;
+      margin-top: 2px;
+    }
+    .tag {
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 2px 6px; border-radius: 4px;
+      background: rgba(0,151,206,0.12);
+      color: var(--accent2);
+    }
+    .tag.warn {
+      background: rgba(245,166,35,0.12);
+      color: var(--amber);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>UX feedback ideas</h1>
+    <p class="lede">
+      Concrete async / notes / publish feedback patterns for the AE panel + shot detail.
+      Complements <a href="./ae-panel-ux-ideas.html" style="color:var(--accent2)">selection/mode ideas</a>
+      and <a href="./shot-detail-directions.html" style="color:var(--accent2)">shot-detail directions</a>.
+      Grounded in ui-ux-pro-max: skeletons &gt; frozen UI, loading buttons, empty+CTA, error recovery near the problem, auto-dismiss toasts.
+    </p>
+    <p class="meta">
+      dials <strong>density 8</strong> · <strong>motion 4</strong> · ftrack tokens ·
+      open file locally or via Vite static
+    </p>
+
+    <div class="grid">
+
+      <!-- 1 -->
+      <article class="idea">
+        <div class="idea-label">
+          <span class="n">Idea 1 · Loading</span>
+          <h2>Notes skeleton (kill “Loading…”)</h2>
+          <p>Reserve note-card geometry; shimmer &gt;300ms. <span class="cmp"><span class="tag">HIGH</span></span></p>
+        </div>
+        <div class="cep" aria-hidden="true">
+          <div class="cep-head"><span class="proj">CleanPlate · LLL</span></div>
+          <div class="cep-tabs"><span>Browse</span><span class="on">Detail</span><span>Publish</span></div>
+          <div class="shot-bar">
+            <div class="code">LLL_FA_020</div>
+            <div class="sub">Comp · Comp 1 · v002</div>
+          </div>
+          <div class="cep-body">
+            <div class="sec">Notes · v002</div>
+            <div class="skel">
+              <div class="skel-line short"></div>
+              <div class="skel-line long"></div>
+              <div class="skel-line mid"></div>
+            </div>
+            <div class="skel">
+              <div class="skel-line short"></div>
+              <div class="skel-line long"></div>
+              <div class="skel-line mid"></div>
+            </div>
+            <div class="skel">
+              <div class="skel-line short"></div>
+              <div class="skel-line mid"></div>
+            </div>
+          </div>
+          <div class="cep-foot"><span>Jobs</span><span class="on">Shots</span><span>Disk</span></div>
+        </div>
+      </article>
+
+      <!-- 2 -->
+      <article class="idea">
+        <div class="idea-label">
+          <span class="n">Idea 2 · Empty state</span>
+          <h2>Empty notes → action, not void</h2>
+          <p>Replace “No notes yet” with intent + focus composer. <span class="cmp"><span class="tag">MED</span></span></p>
+        </div>
+        <div class="cep" aria-hidden="true">
+          <div class="cep-head"><span class="proj">CleanPlate · LLL</span></div>
+          <div class="cep-tabs"><span>Browse</span><span class="on">Detail</span><span>Publish</span></div>
+          <div class="shot-bar">
+            <div class="code">LLL_FA_020</div>
+            <div class="sub">AssetVersion · v003</div>
+          </div>
+          <div class="cep-body">
+            <div class="sec">Notes · v003</div>
+            <div class="empty">
+              <div class="ico">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h14"/><path d="M18 14v6M15 17h6"/></svg>
+              </div>
+              <strong>No notes on this version</strong>
+              <p>First note sets review context for the next artist.</p>
+              <button type="button" class="btn solid">Add first note</button>
+            </div>
+            <div class="composer">
+              <textarea placeholder="Leave a note on this version…" rows="3"></textarea>
+              <button type="button" class="btn solid block">Post note</button>
+            </div>
+          </div>
+          <div class="cep-foot"><span>Jobs</span><span class="on">Shots</span><span>Disk</span></div>
+        </div>
+      </article>
+
+      <!-- 3 -->
+      <article class="idea">
+        <div class="idea-label">
+          <span class="n">Idea 3 · Error recovery</span>
+          <h2>Publish fail · field + next step</h2>
+          <p>Error under the bad field + Retry / Fix path. Not a lone red string. <span class="cmp"><span class="tag">HIGH</span><span class="tag warn">aria-live</span></span></p>
+        </div>
+        <div class="cep" aria-hidden="true">
+          <div class="cep-head"><span class="proj">CleanPlate · LLL</span></div>
+          <div class="cep-tabs"><span>Browse</span><span>Detail</span><span class="on">Publish</span></div>
+          <div class="cep-body">
+            <div class="sec">New version</div>
+            <div class="pub-card">
+              <div class="lab">Shot</div>
+              <div class="field">LLL_FA_020</div>
+              <div class="lab">Component / path</div>
+              <div class="field bad">D:\Renders\FA_020\v004\…</div>
+              <div class="err-block" role="alert">
+                <div class="mark">!</div>
+                <div class="msg">
+                  <strong>Path not readable by ftrack</strong>
+                  <span>Share/mount missing, or file still locked by AE.</span>
+                  <div class="err-actions">
+                    <button type="button" class="btn solid">Retry</button>
+                    <button type="button" class="btn ghost">Copy path</button>
+                  </div>
+                </div>
+              </div>
+              <button type="button" class="btn solid block" disabled>Publish v004</button>
+            </div>
+          </div>
+          <div class="cep-foot"><span>Jobs</span><span class="on">Shots</span><span>Disk</span></div>
+        </div>
+      </article>
+
+      <!-- 4 -->
+      <article class="idea">
+        <div class="idea-label">
+          <span class="n">Idea 4 · Loading button</span>
+          <h2>Sticky CTA · phase + disable</h2>
+          <p>Disable + spinner + phase label (“Encoding…”) so double-submit dies. <span class="cmp"><span class="tag">HIGH</span></span></p>
+        </div>
+        <div class="cep" aria-hidden="true">
+          <div class="cep-head"><span class="proj">CleanPlate · LLL</span></div>
+          <div class="cep-tabs"><span>Browse</span><span>Detail</span><span class="on">Publish</span></div>
+          <div class="cep-body" style="padding-bottom:88px">
+            <div class="sec">Queue</div>
+            <div class="pub-card">
+              <div class="lab">Output</div>
+              <div class="field">FA_020_comp_v004.mov</div>
+              <div class="lab">Status</div>
+              <div style="font-size:12px;color:var(--muted);line-height:1.5">
+                Uploading component… 62%<br />
+                <span style="font-family:IBM Plex Mono,monospace;font-size:10px;color:var(--faint)">3.1 / 5.0 MB</span>
+              </div>
+            </div>
+            <div class="phase"><span class="pulse-dot"></span>Encoding H.264 · don’t close panel</div>
+          </div>
+          <div class="sticky-cta">
+            <button type="button" class="btn ghost" disabled>Cancel</button>
+            <button type="button" class="btn solid busy" disabled>
+              <span class="spin"></span>Publishing…
+            </button>
+          </div>
+          <div class="cep-foot"><span>Jobs</span><span class="on">Shots</span><span>Disk</span></div>
+        </div>
+      </article>
+
+      <!-- 5 -->
+      <article class="idea">
+        <div class="idea-label">
+          <span class="n">Idea 5 · Toasts</span>
+          <h2>Stack + auto-dismiss + dismiss X</h2>
+          <p>Success 3–5s bar; errors sticky until X. <code style="font-size:10px;color:var(--faint)">role=status / alert</code> <span class="cmp"><span class="tag">MED</span></span></p>
+        </div>
+        <div class="cep" aria-hidden="true">
+          <div class="cep-head"><span class="proj">CleanPlate · LLL</span></div>
+          <div class="cep-tabs"><span class="on">Browse</span><span>Detail</span><span>Publish</span></div>
+          <div class="cep-body">
+            <div class="sec">Shots</div>
+            <div class="note">
+              <div class="who">Eric · f184</div>
+              <p>Tighten hold on the plate — still soft on the right edge.</p>
+            </div>
+            <div class="note pending">
+              <div class="who">You</div>
+              <p>Got it — re-render with denser grain.</p>
+            </div>
+          </div>
+          <div class="toast-stack">
+            <div class="toast ok" role="status">
+              <div class="dot"></div>
+              <div class="body">
+                <strong>Note posted</strong>
+                <span>AssetVersion · v002</span>
+              </div>
+              <button type="button" class="x" aria-label="Dismiss">×</button>
+              <div class="bar"></div>
+            </div>
+            <div class="toast bad" role="alert">
+              <div class="dot"></div>
+              <div class="body">
+                <strong>Status update failed</strong>
+                <span>Network · tap to retry</span>
+              </div>
+              <button type="button" class="x" aria-label="Dismiss">×</button>
+            </div>
+          </div>
+          <div class="cep-foot"><span>Jobs</span><span class="on">Shots</span><span>Disk</span></div>
+        </div>
+      </article>
+
+    </div>
+  </div>
+</body>
+</html>

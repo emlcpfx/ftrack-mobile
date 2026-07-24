@@ -86,12 +86,12 @@ export const aeSharedCss = `
     color:var(--text); padding:9px 12px; font-size:12px; font-family:inherit; cursor:pointer;
   }
   .ae-select-menu button:hover, .ae-select-menu button.active {
-    background:rgba(0,151,206,.15); color:var(--accent);
+    background:rgba(232,160,74,.15); color:var(--accent);
   }
   .ae-bar .ae-select { flex:1; min-width:120px; max-width:180px; }
 
   .ae-btn {
-    background:var(--accent); color:#fff; border:none; border-radius:8px;
+    background:var(--accent); color:#141210; border:none; border-radius:8px;
     padding:6px 12px; font-size:11px; font-weight:600; cursor:pointer; font-family:inherit;
   }
   .ae-btn:disabled { opacity:.45; cursor:default; }
@@ -109,17 +109,17 @@ export const aeSharedCss = `
     background:var(--card); border:1px solid var(--border); border-radius:10px;
     padding:12px; margin-bottom:10px; overflow:visible;
   }
-  .ae-shot-name { font-size:15px; font-weight:600; margin-bottom:4px; }
+  .ae-shot-name { font-size:15px; font-weight:600; margin-bottom:4px; font-family:var(--font-mono); letter-spacing:.02em; }
   .ae-meta { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
   .ae-match-row {
     display:flex; align-items:center; gap:8px; padding:8px 10px;
     border-radius:8px; cursor:pointer; border:1px solid transparent;
   }
   .ae-match-row:hover { background:var(--card2); }
-  .ae-match-row.active { border-color:var(--accent); background:rgba(0,151,206,.1); }
+  .ae-match-row.active { border-color:var(--accent); background:rgba(232,160,74,.1); }
   .ae-match-score {
     font-size:10px; font-weight:700; color:var(--accent);
-    background:rgba(0,151,206,.12); border-radius:6px; padding:2px 6px;
+    background:rgba(232,160,74,.12); border-radius:6px; padding:2px 6px;
   }
   .ae-row { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
   .ae-row .ae-btn { flex:1; min-width:110px; }
@@ -140,7 +140,7 @@ export const aeSharedCss = `
     transition:border-color .15s, background .15s; cursor:default;
   }
   .ae-drop.active {
-    border-color:var(--accent); background:rgba(0,151,206,.1); color:var(--accent);
+    border-color:var(--accent); background:rgba(232,160,74,.1); color:var(--accent);
   }
   .ae-drop strong { display:block; color:var(--text); font-size:13px; margin-bottom:4px; }
   .ae-file-row {

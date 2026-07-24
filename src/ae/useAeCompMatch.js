@@ -5,7 +5,8 @@ import { rankShotMatches } from './match.js';
 
 /**
  * Poll active AE comp and match against ftrack shots in the given project.
- * onAutoMatch(shot, score) when confidence >= 80.
+ * onAutoMatch(shot, score) when confidence >= 80 — unless auto-nav is paused
+ * (user manually opened a different shot). Comp change / Match resume auto-nav.
  */
 export function useAeCompMatch(projectId, { onAutoMatch, enabled = true } = {}) {
   const [comp, setComp] = useState(null);
@@ -14,6 +15,7 @@ export function useAeCompMatch(projectId, { onAutoMatch, enabled = true } = {}) 
   const [matchError, setMatchError] = useState('');
   const lastCompName = useRef('');
   const matchGen = useRef(0);
+  const autoNavEnabled = useRef(true);
   const onAutoMatchRef = useRef(onAutoMatch);
   onAutoMatchRef.current = onAutoMatch;
 
@@ -67,7 +69,10 @@ export function useAeCompMatch(projectId, { onAutoMatch, enabled = true } = {}) 
       const ranked = rankShotMatches(compName, shots);
       setMatches(ranked);
       if (ranked[0] && ranked[0].score >= 80) {
-        onAutoMatchRef.current?.(ranked[0].shot, ranked[0].score);
+        // Check at completion time so a mid-flight manual click wins the race
+        if (autoNavEnabled.current) {
+          onAutoMatchRef.current?.(ranked[0].shot, ranked[0].score);
+        }
       } else if (!ranked.length) {
         setMatchError(`No shots matching "${compName}"`);
       }
@@ -80,16 +85,27 @@ export function useAeCompMatch(projectId, { onAutoMatch, enabled = true } = {}) 
     }
   }, [projectId]);
 
-  // Auto-match when comp name changes
+  // Auto-match when comp name changes — resume following AE
   useEffect(() => {
     if (!enabled || !isAePanel()) return;
     if (!projectId || !comp?.ok || !comp.name) return;
     if (comp.name === lastCompName.current) return;
     lastCompName.current = comp.name;
+    autoNavEnabled.current = true;
     runMatch(comp.name);
   }, [comp, projectId, runMatch, enabled]);
 
+  /** Stop auto-opening shots (manual list/detail browse). Match / new AE comp resume. */
+  const pauseAutoNav = useCallback(() => {
+    autoNavEnabled.current = false;
+  }, []);
+
+  const resumeAutoNav = useCallback(() => {
+    autoNavEnabled.current = true;
+  }, []);
+
   const forceRematch = useCallback(async () => {
+    autoNavEnabled.current = true;
     lastCompName.current = '';
     const info = await refreshComp();
     if (info?.ok) return runMatch(info.name);
@@ -107,6 +123,8 @@ export function useAeCompMatch(projectId, { onAutoMatch, enabled = true } = {}) 
     runMatch,
     forceRematch,
     clearMatches,
+    pauseAutoNav,
+    resumeAutoNav,
     refreshComp,
   };
 }

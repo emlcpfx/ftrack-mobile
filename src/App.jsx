@@ -58,26 +58,30 @@ const formatTime = (dateStr) => {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=VT323&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=IBM+Plex+Mono:wght@400;500;600&family=VT323&display=swap');
 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   html, body, #root { height: 100%; }
 
   :root {
-    --bg: #1a1d21;
-    --surface: #222628;
-    --card: #2a2e32;
-    --card2: #32373c;
-    --border: #3a3f44;
-    --accent: #c77dba;
-    --accent2: #d4a0c8;
+    /* Dailies bay */
+    --bg: #141210;
+    --surface: #1c1916;
+    --card: #1a1714;
+    --card2: #24201c;
+    --border: #2e2924;
+    --accent: #e8a04a;
+    --accent2: #f0b86a;
+    --play: #6eb5a8;
+    --sand: #c4b5a0;
     --green: #4CAF50;
     --red: #E74C3C;
-    --amber: #F5A623;
+    --amber: #e8a04a;
     --blue: #2196F3;
-    --text: #e8eaed;
-    --muted: #8b9298;
-    --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --text: #f2efe8;
+    --muted: #9a9288;
+    --font-body: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   }
 
   body { background: var(--bg); color: var(--text); font-family: var(--font-body); overflow: hidden; font-size:14px; -webkit-font-smoothing:antialiased; }
@@ -85,7 +89,7 @@ const css = `
   .app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; max-width: 430px; margin: 0 auto; position: relative; background: var(--bg); padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); overflow: hidden; }
 
   /* ── Login ── */
-  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #1f2225 0%, var(--bg) 60%); }
+  .login { display:flex; flex-direction:column; align-items:center; justify-content:center; height:100dvh; padding:32px; padding-top:calc(32px + env(safe-area-inset-top)); padding-bottom:calc(32px + env(safe-area-inset-bottom)); gap:24px; background: linear-gradient(180deg, #1c1916 0%, var(--bg) 60%); }
   .brand-logo { display:flex; align-items:center; gap:12px; }
   .brand-logo img { filter: brightness(0) invert(1); }
   .brand-logo .brand-divider { width:1px; align-self:stretch; background:var(--border); }
@@ -102,7 +106,7 @@ const css = `
   .field label { font-size:11px; font-weight:600; letter-spacing:.5px; text-transform:uppercase; color:var(--muted); }
   .field input { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:12px 14px; font-family:var(--font-body); font-size:14px; color:var(--text); outline:none; transition:border-color .2s; }
   .field input:focus { border-color:var(--accent); }
-  .btn-primary { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:14px; font-family:var(--font-body); font-size:15px; font-weight:600; cursor:pointer; letter-spacing:.3px; transition:opacity .2s, transform .1s; }
+  .btn-primary { background:var(--accent); color:#141210; border:none; border-radius:8px; padding:14px; font-family:var(--font-body); font-size:15px; font-weight:600; cursor:pointer; letter-spacing:.3px; transition:opacity .2s, transform .1s; }
   .btn-primary:active { transform:scale(.98); opacity:.9; }
   .btn-primary:disabled { opacity:.4; cursor:not-allowed; }
 
@@ -141,7 +145,7 @@ const css = `
   .review-name { font-size:15px; font-weight:600; margin-bottom:6px; line-height:1.3; }
   .review-meta { display:flex; gap:12px; align-items:center; }
   .review-date { font-size:12px; color:var(--muted); }
-  .review-badge { background:rgba(0,151,206,.12); border-radius:6px; padding:3px 8px; font-size:11px; font-weight:600; color:var(--accent); }
+  .review-badge { background:rgba(232,160,74,.12); border-radius:6px; padding:3px 8px; font-size:11px; font-weight:600; color:var(--accent); }
   .review-thumbs { display:flex; gap:4px; padding:0 16px 14px; overflow:hidden; }
   .review-thumb { width:64px; height:36px; border-radius:6px; object-fit:cover; background:var(--card2); flex-shrink:0; }
   .review-thumb-more { width:40px; height:36px; border-radius:6px; background:var(--card2); display:flex; align-items:center; justify-content:center; font-size:11px; color:var(--muted); flex-shrink:0; }
@@ -184,7 +188,7 @@ const css = `
   .note-clickable { cursor:pointer; transition:background .15s; }
   .note-clickable:active { background:var(--card2); }
   .note-author { font-size:11px; font-weight:600; color:var(--accent); margin-bottom:4px; }
-  .note-frame { font-size:10px; font-family:monospace; color:var(--accent2); background:rgba(0,151,206,0.12); padding:2px 6px; border-radius:4px; }
+  .note-frame { font-size:10px; font-family:var(--font-mono); color:var(--play); background:rgba(110,181,168,0.12); padding:2px 6px; border-radius:4px; }
   .note-delete { background:none; border:none; cursor:pointer; font-size:16px; padding:4px 6px; color:var(--red); opacity:0.7; transition:opacity .15s; }
   .note-delete:hover, .note-delete:active { opacity:1; }
   .note-annotation-thumb { width:100%; max-height:120px; object-fit:contain; border-radius:6px; margin:6px 0 4px; background:#000; }
@@ -198,7 +202,7 @@ const css = `
   /* ── Note Category & Mention ── */
   .note-cat-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
   .note-cat-chip { padding:4px 10px; border-radius:12px; font-size:11px; font-weight:600; cursor:pointer; border:1px solid var(--border); background:var(--card); color:var(--muted); font-family:var(--font-body); white-space:nowrap; }
-  .note-cat-chip.active { border-color:var(--accent); color:var(--accent); background:rgba(199,125,186,.1); }
+  .note-cat-chip.active { border-color:var(--accent); color:var(--accent); background:rgba(232,160,74,.12); }
   .note-category-label { font-size:10px; font-weight:600; background:rgba(33,150,243,.1); color:var(--blue); padding:1px 6px; border-radius:4px; }
   .mention-dropdown { position:absolute; bottom:100%; left:0; right:0; background:var(--surface); border:1px solid var(--border); border-radius:8px 8px 0 0; max-height:150px; overflow-y:auto; z-index:10; box-shadow:0 -4px 12px rgba(0,0,0,.3); }
   .mention-dropdown::-webkit-scrollbar { display:none; }
@@ -243,7 +247,7 @@ const css = `
   .select-circle.checked { background:var(--accent); border-color:var(--accent); }
   .shot-list-thumb { width:64px; height:36px; border-radius:6px; object-fit:cover; background:var(--card2); flex-shrink:0; }
   .shot-list-info { flex:1; min-width:0; overflow:hidden; }
-  .shot-list-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .shot-list-name { font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:var(--font-mono); letter-spacing:.02em; }
   .shot-list-artist { font-size:12px; color:var(--muted); margin-top:2px; }
   .shot-list-tasks { width:100%; padding-left:76px; display:flex; flex-direction:column; gap:4px; margin-top:-2px; }
   .shot-task-row { display:flex; align-items:center; justify-content:space-between; }
@@ -275,18 +279,67 @@ const css = `
   .toast { position:absolute; top:80px; left:50%; transform:translateX(-50%); background:var(--card); border:1px solid var(--border); border-radius:8px; padding:10px 18px; font-size:13px; font-weight:500; color:var(--text); z-index:500; white-space:nowrap; animation:fadeInOut 2.2s forwards; }
   @keyframes fadeInOut { 0%{opacity:0;transform:translateX(-50%) translateY(-8px)} 15%{opacity:1;transform:translateX(-50%) translateY(0)} 75%{opacity:1} 100%{opacity:0} }
 
-  /* ── Shot Detail ── */
-  .shot-detail { display:flex; flex-direction:column; flex:1; }
+  /* ── Shot Detail (Dailies bay) ── */
+  .shot-detail { display:flex; flex-direction:column; flex:1; min-height:0; }
+  .shot-detail-header-code { font-family:var(--font-mono); font-size:13px; font-weight:500; letter-spacing:.02em; color:var(--sand); }
+  .shot-detail-gate {
+    margin:10px 14px 0; position:relative; aspect-ratio:16/9; border-radius:2px;
+    background:#0a0908; border:1px solid var(--border); overflow:hidden; cursor:pointer;
+    padding:0; display:block; width:calc(100% - 28px); color:inherit; font:inherit;
+  }
+  .shot-detail-gate:disabled { cursor:default; opacity:.55; }
+  .shot-detail-gate::before, .shot-detail-gate::after {
+    content:''; position:absolute; width:18px; height:18px; border-color:rgba(232,160,74,.55); border-style:solid; z-index:2; pointer-events:none;
+  }
+  .shot-detail-gate::before { top:8px; left:8px; border-width:2px 0 0 2px; }
+  .shot-detail-gate::after { bottom:8px; right:8px; border-width:0 2px 2px 0; }
+  .shot-detail-gate-img, .shot-detail-gate-ph {
+    width:100%; height:100%; object-fit:cover; display:block; background:var(--card2);
+  }
+  .shot-detail-gate-ph { display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:28px; }
+  .shot-detail-gate-scrim {
+    position:absolute; inset:0; background:linear-gradient(180deg, transparent 40%, rgba(10,9,8,.75));
+    display:flex; align-items:flex-end; justify-content:flex-start; padding:12px 14px; gap:10px;
+  }
+  .shot-detail-play {
+    width:40px; height:40px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--play); color:#0a0908; font-size:14px; font-weight:700;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    box-shadow:0 4px 16px rgba(0,0,0,.4); font-family:inherit; padding:0 0 0 2px;
+  }
+  .shot-detail-play:disabled { opacity:.4; cursor:default; }
+  .shot-detail-play-label { font-size:12px; font-weight:600; color:var(--text); letter-spacing:.02em; }
+  .shot-detail-play-sub { font-size:11px; color:var(--muted); margin-top:2px; font-family:var(--font-mono); }
+  .shot-detail-meta-row {
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:12px 16px 4px; flex-wrap:wrap;
+  }
+  .shot-detail-ver {
+    font-family:var(--font-mono); font-size:12px; color:var(--muted); letter-spacing:.04em;
+  }
+  .shot-detail-ver strong { color:var(--text); font-weight:500; }
+  .shot-detail-tools {
+    display:flex; flex-wrap:wrap; gap:8px; padding:10px 16px 14px; border-bottom:1px solid var(--border);
+  }
+  .shot-tool {
+    flex:1; min-width:100px; background:var(--card); border:1px solid var(--border); border-radius:6px;
+    padding:9px 10px; color:var(--text); font-size:12px; font-weight:600; cursor:pointer;
+    font-family:var(--font-body); display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .shot-tool:disabled { opacity:.4; cursor:not-allowed; }
+  .shot-tool:active:not(:disabled) { transform:scale(.98); }
+  .shot-tool--play { background:rgba(110,181,168,.12); border-color:rgba(110,181,168,.35); color:var(--play); }
+  .shot-tool--accent { background:rgba(232,160,74,.12); border-color:rgba(232,160,74,.35); color:var(--accent); }
   .shot-detail-hero { padding:20px; display:flex; gap:14px; align-items:flex-start; border-bottom:1px solid var(--border); }
   .shot-detail-thumb { width:100px; height:56px; border-radius:8px; object-fit:cover; background:var(--card2); flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:24px; }
   .shot-detail-meta { flex:1; min-width:0; }
-  .shot-detail-name { font-size:17px; font-weight:700; margin-bottom:4px; }
+  .shot-detail-name { font-size:17px; font-weight:700; margin-bottom:4px; font-family:var(--font-mono); letter-spacing:.02em; }
   .shot-detail-actions { display:flex; gap:8px; padding:12px 20px; border-bottom:1px solid var(--border); }
   .action-btn { flex:1; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--card); font-family:var(--font-body); font-size:13px; font-weight:500; color:var(--text); cursor:pointer; text-align:center; transition:border-color .15s; }
   .action-btn:active { border-color:var(--accent); }
   .version-item { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid var(--border); cursor:pointer; transition:background .15s; }
   .version-item:active { background:var(--surface); }
-  .version-num { width:40px; height:40px; border-radius:8px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:var(--accent); flex-shrink:0; }
+  .version-num { width:40px; height:40px; border-radius:8px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; color:var(--accent); flex-shrink:0; font-family:var(--font-mono); }
   .version-info { flex:1; min-width:0; }
   .version-label { font-size:14px; font-weight:600; }
   .version-meta { font-size:12px; color:var(--muted); margin-top:2px; }
@@ -327,7 +380,7 @@ const css = `
   .transfer-note-meta { display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:6px; }
   .transfer-note-author { font-size:11px; font-weight:600; color:var(--accent); }
   .transfer-note-cat { font-size:10px; background:rgba(33,150,243,.1); color:var(--blue); padding:1px 6px; border-radius:4px; }
-  .transfer-note-frame { font-size:10px; font-family:monospace; color:var(--accent2); background:rgba(199,125,186,.12); padding:1px 6px; border-radius:4px; }
+  .transfer-note-frame { font-size:10px; font-family:var(--font-mono); color:var(--play); background:rgba(110,181,168,.12); padding:1px 6px; border-radius:4px; }
   .transfer-note-date { font-size:10px; color:var(--muted); margin-left:auto; }
   .transfer-note-edit { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--font-body); font-size:12px; color:var(--text); outline:none; resize:vertical; min-height:40px; line-height:1.5; transition:border-color .2s; }
   .transfer-note-edit:focus { border-color:var(--accent); }
@@ -411,7 +464,7 @@ const css = `
   /* ── Transfer destination ── */
   .transfer-dest-row { display:flex; gap:8px; padding:8px 20px; border-bottom:1px solid var(--border); }
   .transfer-dest-btn { flex:1; padding:8px; border-radius:6px; border:1px solid var(--border); background:var(--card); font-family:var(--font-body); font-size:12px; font-weight:600; color:var(--muted); cursor:pointer; text-align:center; }
-  .transfer-dest-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(199,125,186,.08); }
+  .transfer-dest-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(232,160,74,.1); }
 
   /* ── Misc ── */
   .empty { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:60px 20px; color:var(--muted); gap:12px; }
@@ -2332,6 +2385,7 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
     matchError: aeMatchError,
     forceRematch: aeForceRematch,
     clearMatches: aeClearMatches,
+    pauseAutoNav: aePauseAutoNav,
   } = useAeCompMatch(selectedProjectId, {
     enabled: inAe,
     onAutoMatch: (shot) => applyMatchedShotRef.current(shot),
@@ -2610,6 +2664,8 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
     if (multiSelect) {
       toggleSelect(shot.id);
     } else {
+      // Don't let AE auto-match yank us back to the active comp's shot
+      if (inAe) aePauseAutoNav();
       openShotDetail(shot);
     }
   };
@@ -2922,6 +2978,7 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
   };
 
   const openVersionInPlayer = (ver) => {
+    if (!ver?.id) return;
     setPlayer({
       id: detailShot.id,
       name: detailShot.name,
@@ -2934,6 +2991,15 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
       taskId: ver.taskId || detailShot.id, // version's task, or fall back to the task entry itself
       shotId: detailShot.shotId || detailShot.id,
     });
+  };
+
+  const playSelectedVersion = () => {
+    const ver = importVersionMeta || versions[0];
+    if (!ver) {
+      showToast('No version to play');
+      return;
+    }
+    openVersionInPlayer(ver);
   };
 
   const applyStatus = async (newStatus) => {
@@ -3477,12 +3543,16 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
   if (detailShot) {
     const hasOriginal = inAe && !!pickAeImportComponent(importComponents, 'original');
     const hasProxy = inAe && !!pickAeImportComponent(importComponents, 'proxy');
+    const playVer = importVersionMeta || versions[0] || null;
+    const canPlay = !!playVer;
+    const thumbSrc = detailShot.thumb || importVersionMeta?.thumb || versions[0]?.thumb || '';
+    const artistLabel = importVersionMeta?.artist || versions[0]?.artist || detailShot.artist || '';
     return (
     <div className="shot-detail" style={{ position: "relative" }}>
       <Toast msg={toast} />
       <div className="header">
         <div className="back-btn" onClick={() => { setDetailShot(null); setVersions([]); setDetailTasks([]); setImportComponents([]); setImportVersionMeta(null); }}>&#8592; Shots</div>
-        <div className="header-title" style={{ fontSize: 15 }}>{detailShot.name}</div>
+        <div className="shot-detail-header-code">{detailShot.name}</div>
       </div>
 
       {inAe && (
@@ -3497,18 +3567,87 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
         />
       )}
 
-      <div className="shot-detail-hero">
-        {detailShot.thumb
-          ? <img className="shot-detail-thumb" src={detailShot.thumb} alt="" style={{ width: 100, height: 56, borderRadius: 8, objectFit: 'cover' }} />
-          : <div className="shot-detail-thumb">&#127916;</div>
-        }
-        <div className="shot-detail-meta">
-          <div className="shot-detail-name">{detailShot.name}</div>
-          <StatusPill status={detailShot.status} onClick={() => setStatusModal("shot-status")} />
+      <button
+        type="button"
+        className="shot-detail-gate"
+        onClick={playSelectedVersion}
+        disabled={!canPlay}
+        title={canPlay ? `Play v${playVer.version}` : 'No version yet'}
+      >
+        {thumbSrc
+          ? <img className="shot-detail-gate-img" src={thumbSrc} alt="" />
+          : <div className="shot-detail-gate-ph">&#127916;</div>}
+        <div className="shot-detail-gate-scrim">
+          <span className="shot-detail-play" aria-hidden>▶</span>
+          <div>
+            <div className="shot-detail-play-label">{canPlay ? 'Play version' : 'No media yet'}</div>
+            <div className="shot-detail-play-sub">
+              {canPlay ? `v${playVer.version}${artistLabel ? ` · ${artistLabel}` : ''}` : 'Publish to unlock'}
+            </div>
+          </div>
         </div>
+      </button>
+
+      <div className="shot-detail-meta-row">
+        <div className="shot-detail-ver">
+          {canPlay ? (
+            <>
+              <strong>v{playVer.version}</strong>
+              {artistLabel ? ` · ${artistLabel}` : ''}
+            </>
+          ) : (
+            'No published version'
+          )}
+        </div>
+        <StatusPill status={detailShot.status} onClick={() => setStatusModal("shot-status")} />
+      </div>
+
+      <div className="shot-detail-tools">
         <button
+          type="button"
+          className="shot-tool shot-tool--play"
+          onClick={playSelectedVersion}
+          disabled={!canPlay}
+        >
+          ▶ Play{canPlay ? ` v${playVer.version}` : ''}
+        </button>
+        {inAe && (
+          <>
+            {versions.length > 0 && (
+              <div style={{ minWidth: 100, flex: '0 0 110px' }}>
+                <AeSelect
+                  value={importVersionMeta?.id || ''}
+                  placeholder="Version"
+                  onChange={selectImportVersion}
+                  options={versions.map((v) => ({
+                    value: v.id,
+                    label: `v${v.version}`,
+                  }))}
+                />
+              </div>
+            )}
+            <button
+              type="button"
+              className="shot-tool"
+              disabled={!hasOriginal || !!importBusy}
+              onClick={() => doAeImport('original')}
+            >
+              {importBusy === 'original' ? '…' : 'Import orig'}
+            </button>
+            <button
+              type="button"
+              className="shot-tool"
+              disabled={!hasProxy || !!importBusy}
+              onClick={() => doAeImport('proxy')}
+            >
+              {importBusy === 'proxy' ? '…' : 'Proxy'}
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="shot-tool shot-tool--accent"
           onClick={() => openReviewPicker([detailShot])}
-          style={{ background: "var(--accent)", border: "none", borderRadius: 6, padding: '8px 12px', color: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-body)", whiteSpace: 'nowrap' }}
           title="Add latest version to review"
         >
           + Review
@@ -3608,87 +3747,17 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
           </div>
         ))}
 
-        {inAe && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              flexWrap: 'wrap',
-              padding: '8px 16px 10px',
-              borderBottom: '1px solid var(--border)',
-            }}
-          >
-            <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', letterSpacing: 0.3 }}>
-              Import
-            </span>
-            {versions.length > 0 && (
-              <div style={{ minWidth: 88, maxWidth: 120 }}>
-                <AeSelect
-                  value={importVersionMeta?.id || ''}
-                  placeholder="Version"
-                  onChange={selectImportVersion}
-                  options={versions.map((v) => ({
-                    value: v.id,
-                    label: `v${v.version}`,
-                  }))}
-                />
-              </div>
-            )}
-            <button
-              type="button"
-              disabled={!hasOriginal || !!importBusy}
-              onClick={() => doAeImport('original')}
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--border)',
-                borderRadius: 5,
-                padding: '3px 8px',
-                color: 'var(--muted)',
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: hasOriginal && !importBusy ? 'pointer' : 'default',
-                fontFamily: 'inherit',
-                opacity: !hasOriginal || importBusy ? 0.4 : 1,
-              }}
-            >
-              {importBusy === 'original' ? '…' : 'Original'}
-            </button>
-            <button
-              type="button"
-              disabled={!hasProxy || !!importBusy}
-              onClick={() => doAeImport('proxy')}
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--border)',
-                borderRadius: 5,
-                padding: '3px 8px',
-                color: 'var(--muted)',
-                fontSize: 10,
-                fontWeight: 600,
-                cursor: hasProxy && !importBusy ? 'pointer' : 'default',
-                fontFamily: 'inherit',
-                opacity: !hasProxy || importBusy ? 0.4 : 1,
-              }}
-            >
-              {importBusy === 'proxy' ? '…' : 'Proxy'}
-            </button>
-            {!importVersionMeta && !versionsLoading && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', opacity: 0.7 }}>needs a published version</span>
-            )}
-            {importVersionMeta && !hasOriginal && hasProxy && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', opacity: 0.7 }}>proxy only</span>
-            )}
-          </div>
-        )}
-
-        {inAe && (
-          <ShotDetailNotes
-            parentId={importVersionMeta?.id || ''}
-            parentType="AssetVersion"
-            label={importVersionMeta ? `v${importVersionMeta.version}` : ''}
-          />
-        )}
+        <ShotDetailNotes
+          parentId={importVersionMeta?.id || versions[0]?.id || ''}
+          parentType="AssetVersion"
+          label={
+            importVersionMeta
+              ? `v${importVersionMeta.version}`
+              : versions[0]
+                ? `v${versions[0].version}`
+                : ''
+          }
+        />
 
         <div className="section-label">Versions ({versions.length})</div>
         {versionsLoading && <div className="loading">Loading versions...</div>}
@@ -3870,7 +3939,7 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
               {shot.description && <div className="shot-list-artist" style={{ marginTop: 2, fontStyle: 'italic', opacity: 0.7, lineHeight: 1.4 }}>{shot.description}</div>}
             </div>
             <div className="shot-list-status" onMouseDown={e => e.stopPropagation()} onTouchStart={e => e.stopPropagation()} style={{ flexShrink: 0, padding: '8px 0 8px 8px' }}>
-              <StatusPill status={shot.status} small onClick={(e) => { e.stopPropagation(); setDetailShot(shot); setStatusModal("shot-status"); }} />
+              <StatusPill status={shot.status} small onClick={(e) => { e.stopPropagation(); if (inAe) aePauseAutoNav(); setDetailShot(shot); setStatusModal("shot-status"); }} />
             </div>
           </div>
         ))}

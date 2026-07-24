@@ -25,3 +25,4 @@ ae-panel/www
 *.sw?
 .env
 .vercel
+.cursor/skills/
