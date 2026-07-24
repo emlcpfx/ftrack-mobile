@@ -36,6 +36,7 @@ import { runClientGeminiChat } from "./chat/clientChat.js";
 import { resolveAeProject, persistSharedProjectId, getSharedProjectId } from "./ae/projectContext.js";
 import { fetchAeAlerts } from "./ae/alerts.js";
 import { subscribeAlertRefresh } from "./api/eventHub.js";
+import ThumbImg from "./components/ThumbImg.jsx";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 const normalizeColor = (c) => {
@@ -43,6 +44,54 @@ const normalizeColor = (c) => {
   if (c.startsWith('#')) return c;
   if (/^[0-9a-fA-F]{3,8}$/.test(c)) return '#' + c;
   return c;
+};
+
+const parseHexRgb = (hex) => {
+  const h = normalizeColor(hex).replace('#', '');
+  const full = h.length === 3 ? h.split('').map((ch) => ch + ch).join('') : h.slice(0, 6);
+  if (!/^[0-9a-fA-F]{6}$/.test(full)) return null;
+  return {
+    r: parseInt(full.slice(0, 2), 16),
+    g: parseInt(full.slice(2, 4), 16),
+    b: parseInt(full.slice(4, 6), 16),
+  };
+};
+
+/** Relative luminance 0–1 (sRGB). */
+const colorLuminance = (hex) => {
+  const rgb = parseHexRgb(hex);
+  if (!rgb) return 0.5;
+  const toLin = (n) => {
+    const s = n / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * toLin(rgb.r) + 0.7152 * toLin(rgb.g) + 0.0722 * toLin(rgb.b);
+};
+
+/**
+ * ftrack status colors are authored for light UI (Omit=#000, Completed=#003300).
+ * Lighten near-black colors while keeping hue so pills stay readable AND distinct.
+ */
+const readableStatusColor = (c) => {
+  const hex = normalizeColor(c);
+  if (colorLuminance(hex) >= 0.18) return hex;
+
+  const rgb = parseHexRgb(hex);
+  if (!rgb) return '#9a9288';
+
+  // Pure / near-black → neutral muted (no hue to preserve)
+  if (rgb.r + rgb.g + rgb.b < 24) return '#9a9288';
+
+  // Mix toward white until luminance clears the dark-UI floor
+  let { r, g, b } = rgb;
+  for (let i = 0; i < 12; i++) {
+    r = Math.round(r + (255 - r) * 0.28);
+    g = Math.round(g + (255 - g) * 0.28);
+    b = Math.round(b + (255 - b) * 0.28);
+    const next = `#${[r, g, b].map((n) => n.toString(16).padStart(2, '0')).join('')}`;
+    if (colorLuminance(next) >= 0.22) return next;
+  }
+  return '#9a9288';
 };
 
 const formatDate = (dateStr) => {
@@ -475,7 +524,7 @@ const css = `
 
 // ─── Utils ────────────────────────────────────────────────────────────────────
 function StatusPill({ status, small, onClick }) {
-  const color = normalizeColor(status?.color);
+  const color = readableStatusColor(status?.color);
   return (
     <span className={`status-pill${onClick ? ' status-pill-clickable' : ''}`} style={{
       background: color + "22",
@@ -1133,7 +1182,7 @@ function PlayerScreen({ shot, onClose, shots, onSwitch, onStatusChange }) {
               }
               setStatusPicker(false);
             }}>
-              <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+              <span style={{ background: readableStatusColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
               <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
               {currentStatus?.id === s.id && <span style={{ color: 'var(--green)', fontSize: 18 }}>&#10003;</span>}
             </div>
@@ -1911,7 +1960,7 @@ function ReviewsTab({ userInitial, onLogout }) {
       <div className="scroll">
         {statuses.map(s => (
           <div key={s.id} className="shot-list-item" onClick={() => handleBulkStatus(s.id, s.name, s.color)}>
-            <span style={{ background: normalizeColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
+            <span style={{ background: readableStatusColor(s.color), width: 12, height: 12, borderRadius: '50%', flexShrink: 0 }} />
             <div className="shot-list-info"><div className="shot-list-name">{s.name}</div></div>
           </div>
         ))}
@@ -2512,7 +2561,11 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
         const shotMap = {};
         for (const s of data) {
           const thumbId = s.thumbnail_id || versionThumbs[s.id];
-          shotMap[s.id] = { name: s.name, thumb: getThumbnailUrl(thumbId) };
+          shotMap[s.id] = {
+            name: s.name,
+            thumbId: thumbId || null,
+            thumb: getThumbnailUrl(thumbId),
+          };
         }
         const flat = [];
         for (const s of data) {
@@ -2526,6 +2579,7 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
               type: '',
               status: { id: s.status?.id, name: s.status?.name || 'Unknown', color: normalizeColor(s.status?.color) },
               thumb: shotMap[s.id]?.thumb,
+              thumbId: shotMap[s.id]?.thumbId || null,
               artist: '',
               tasks: [],
               assigneeIds: [],
@@ -2540,6 +2594,7 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
                 description: t.description,
                 status: { id: t.status.id, name: t.status.name, color: normalizeColor(t.status.color) },
                 thumb: shotMap[s.id]?.thumb,
+                thumbId: shotMap[s.id]?.thumbId || null,
                 artist: t.assignee,
                 tasks: tasks,
                 assigneeIds: t.assigneeIds || [],
@@ -3936,10 +3991,11 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
                 {selected.has(shot.id) && <span style={{ fontSize: 12, color: "#fff" }}>&#10003;</span>}
               </div>
             )}
-            {shot.thumb
-              ? <img className="shot-list-thumb" src={shot.thumb} alt="" />
-              : <div className="shot-list-thumb" style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>&#127916;</div>
-            }
+            <ThumbImg
+              className="shot-list-thumb"
+              src={shot.thumb}
+              componentId={shot.thumbId}
+            />
             <div className="shot-list-info">
               <div className="shot-list-name">{shot.name}{shot.type ? ` / ${shot.type}` : ''}</div>
               {shot.artist && <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 1 }}>{shot.artist}</div>}
