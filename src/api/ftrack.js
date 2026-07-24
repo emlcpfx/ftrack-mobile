@@ -1117,6 +1117,31 @@ export async function fetchLatestVersionForShot(shotId) {
   return result.data[0] || null;
 }
 
+/**
+ * Map shotId → thumbnail_id from the newest AssetVersion that has a thumb.
+ * Shot.thumbnail_id is often unset; list UIs should use this.
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function fetchLatestThumbnailsByShot(projectId) {
+  if (!projectId) return {};
+  const s = getSession();
+  const result = await s.query(
+    `select thumbnail_id, version, date, asset.parent.id
+     from AssetVersion
+     where asset.parent.project.id is "${projectId}"
+       and thumbnail_id is_not none
+     order by date descending
+     limit 5000`
+  );
+  const byShot = {};
+  for (const v of result.data || []) {
+    const shotId = v.asset?.parent?.id;
+    if (!shotId || byShot[shotId] || !v.thumbnail_id) continue;
+    byShot[shotId] = v.thumbnail_id;
+  }
+  return byShot;
+}
+
 /** Transfer notes from one entity to another (copy notes from review version to task) */
 export async function transferNotes(sourceId, targetId, targetType) {
   const s = getSession();

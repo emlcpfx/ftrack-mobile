@@ -20,6 +20,7 @@ import {
   addVersionToReview, removeFromReview, createReviewSession,
   searchVersionsForReview, transferNotes, transferEditedNotes,
   getReviewUrl, fetchLatestVersionForTask, fetchLatestVersionForShot,
+  fetchLatestThumbnailsByShot,
   fetchCustomAttributeConfigs, fetchCustomAttributeValues,
   cleanAndSortReview,
 } from "./api/ftrack";
@@ -2500,12 +2501,18 @@ function ShotsTab({ focusRequest = null, onFocusHandled } = {}) {
       })
       .catch(err => console.warn('[ShotsTab] Custom attrs error:', err));
 
-    Promise.all([fetchShots(selectedProjectId), fetchProjectTasks(selectedProjectId).catch(() => ({}))])
-      .then(([data, tasksByShot]) => {
+    Promise.all([
+      fetchShots(selectedProjectId),
+      fetchProjectTasks(selectedProjectId).catch(() => ({})),
+      fetchLatestThumbnailsByShot(selectedProjectId).catch(() => ({})),
+    ])
+      .then(([data, tasksByShot, versionThumbs]) => {
         // Build a flat task list — each entry is a task carrying its parent shot info
+        // Prefer Shot.thumbnail_id; fall back to newest AssetVersion thumb (usual case)
         const shotMap = {};
         for (const s of data) {
-          shotMap[s.id] = { name: s.name, thumb: getThumbnailUrl(s.thumbnail_id) };
+          const thumbId = s.thumbnail_id || versionThumbs[s.id];
+          shotMap[s.id] = { name: s.name, thumb: getThumbnailUrl(thumbId) };
         }
         const flat = [];
         for (const s of data) {
